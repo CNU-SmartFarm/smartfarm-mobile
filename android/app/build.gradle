@@ -1,0 +1,119 @@
+//plugins {
+//    id "com.android.application"
+//    id "kotlin-android"
+//    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+//    id "dev.flutter.flutter-gradle-plugin"
+//}
+//
+//android {
+//    namespace = "com.example.smartfarm_mobile"
+//    compileSdk = flutter.compileSdkVersion
+//    ndkVersion = flutter.ndkVersion
+//
+//    compileOptions {
+////        sourceCompatibility = JavaVersion.VERSION_1_8
+////        targetCompatibility = JavaVersion.VERSION_1_8
+//        sourceCompatibility = JavaVersion.VERSION_11
+//        targetCompatibility = JavaVersion.VERSION_11
+//    }
+//
+//    kotlinOptions {
+////        jvmTarget = JavaVersion.VERSION_1_8
+//        jvmTarget = JavaVersion.VERSION_11
+//    }
+//
+//    defaultConfig {
+//        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+//        applicationId = "com.example.smartfarm_mobile"
+//        // You can update the following values to match your application needs.
+//        // For more information, see: https://flutter.dev/to/review-gradle-config.
+//        minSdk = flutter.minSdkVersion
+//        targetSdk = flutter.targetSdkVersion
+//        versionCode = flutter.versionCode
+//        versionName = flutter.versionName
+//    }
+//
+//    buildTypes {
+//        release {
+//            // TODO: Add your own signing config for the release build.
+//            // Signing with the debug keys for now, so `flutter run --release` works.
+//            signingConfig = signingConfigs.debug
+//        }
+//    }
+//}
+//
+//flutter {
+//    source = "../.."
+//}
+
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+// Kotlin 버전을 가져오기 위한 설정 (만약 최상위 build.gradle에 없다면 여기에 직접 명시)
+// 보통은 최상위 build.gradle의 ext 블록에 정의되어 있습니다.
+def kotlinVersion = rootProject.ext.has('kotlinVersion') ? rootProject.ext.get('kotlinVersion') : '1.9.22' // 기본값 예시
+
+android {
+    namespace = "com.example.smartfarm_mobile"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+        // --- Core Library Desugaring 활성화 ---
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_11
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.example.smartfarm_mobile"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+        // multiDexEnabled true // minSdkVersion이 21 미만일 경우 필요할 수 있음
+    }
+
+    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.debug
+            // minifyEnabled true // 코드 축소 (프로가드) 사용 시
+            // shrinkResources true // 사용하지 않는 리소스 제거
+            // proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' // 프로가드 규칙 파일
+        }
+    }
+    // --- lint 옵션 추가 (선택 사항, 경고 제거용) ---
+    lintOptions {
+        // checkReleaseBuilds false // 릴리즈 빌드 시 lint 검사 중단 (오류 발생 시)
+        abortOnError false // lint 오류 발생 시 빌드 중단 안 함
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+// --- dependencies 블록 추가 ---
+dependencies {
+    // Kotlin 표준 라이브러리 (이미 kotlin-android 플러그인이 적용되었으므로 필요할 수 있음)
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlinVersion"
+
+    // --- Core Library Desugaring 의존성 추가 ---
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
+    // 여기에 다른 필요한 안드로이드 네이티브 의존성이 있다면 추가할 수 있습니다.
+    // 예: implementation 'androidx.core:core-ktx:1.9.0'
+}
