@@ -17,6 +17,25 @@ class _AddPlantScreenState extends State<AddPlantScreen> {
   bool _isLoading = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 화면 표시 후 이미 식물이 있는지 확인
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final plantProvider = Provider.of<PlantProvider>(context, listen: false);
+      if (plantProvider.hasPlant) {
+        // 이미 식물이 있으면 경고 메시지 표시 후 이전 화면으로 이동
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('식물은 한 개만 추가할 수 있습니다.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     super.dispose();
@@ -30,6 +49,25 @@ class _AddPlantScreenState extends State<AddPlantScreen> {
       ),
       body: Consumer<PlantProvider>(
         builder: (context, plantProvider, child) {
+          // 이미 식물이 있는 경우 "한 개만 추가 가능" 메시지 표시
+          if (plantProvider.hasPlant) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange),
+                  SizedBox(height: 16),
+                  Text(
+                    '식물은 한 개만 추가할 수 있습니다.',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 8),
+                  Text('이미 등록된 식물이 있습니다.'),
+                ],
+              ),
+            );
+          }
+
           if (plantProvider.species.isEmpty && plantProvider.isLoading) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -91,7 +129,9 @@ class _AddPlantScreenState extends State<AddPlantScreen> {
                     width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : () => _savePlant(plantProvider),
+                      onPressed: _isLoading || plantProvider.hasPlant
+                          ? null
+                          : () => _savePlant(plantProvider),
                       child: _isLoading
                           ? const CircularProgressIndicator()
                           : const Text('식물 추가하기'),
@@ -217,6 +257,17 @@ class _AddPlantScreenState extends State<AddPlantScreen> {
   }
 
   void _savePlant(PlantProvider plantProvider) async {
+    // 한번 더 확인: 이미 식물이 있는 경우 추가하지 않음
+    if (plantProvider.hasPlant) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('식물은 한 개만 추가할 수 있습니다.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }

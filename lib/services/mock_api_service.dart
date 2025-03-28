@@ -33,7 +33,7 @@ class MockApiService {
     // 식물 종 데이터 생성
     _initSpecies();
 
-    // 샘플 식물 생성
+    // 샘플 식물 생성 - 한 개만 생성하도록 수정
     _initSamplePlants();
 
     // 센서 데이터 초기 생성
@@ -98,7 +98,7 @@ class MockApiService {
     ]);
   }
 
-  // 샘플 식물 초기화
+  // 샘플 식물 초기화 - 한 개만 생성
   void _initSamplePlants() {
     // 샘플 식물 1: 정상 범위 내 (스파티필름)
     final plant1 = Plant(
@@ -107,21 +107,8 @@ class MockApiService {
       speciesId: 'sp1',
     );
 
-    // 샘플 식물 2: 온도 높음 경고 (몬스테라)
-    final plant2 = Plant(
-      id: '2',
-      name: '화장실 몬스테라',
-      speciesId: 'sp2',
-    );
-
-    // 샘플 식물 3: 습도 낮음 경고 (산세베리아)
-    final plant3 = Plant(
-      id: '3',
-      name: '창가 선인장',
-      speciesId: 'sp3',
-    );
-
-    _plants.addAll([plant1, plant2, plant3]);
+    // 식물은 한 개만 추가
+    _plants.add(plant1);
   }
 
   // 초기 센서 데이터 생성
@@ -140,15 +127,6 @@ class MockApiService {
         double baseHumidity = 50;
         double baseLight = 800;
         double variation = 0.3;  // 30% 변동폭
-
-        // 식물 종류별로 데이터 조정 (테스트용)
-        if (plant.speciesId == 'sp2') {  // 몬스테라 - 온도 높음 시뮬레이션
-          baseTemp = 29;  // 적정 범위보다 약간 아래로 시작
-          variation = 0.2;  // 더 작은 변동폭
-        } else if (plant.speciesId == 'sp3') {  // 산세베리아 - 습도 낮음 시뮬레이션
-          baseHumidity = 35;  // 적정 범위보다 약간 높게 시작
-          variation = 0.4;  // 더 큰 변동폭
-        }
 
         // 시간에 따른 변화 시뮬레이션 (사인파)
         final hourFactor = sin(i * 0.5) * variation;
@@ -239,13 +217,6 @@ class MockApiService {
     // 기본 변동폭
     double change = (_random.nextDouble() * 2 - 1) * maxChange;
 
-    // 테스트를 위한 특별 조건
-    if (plantId == '2' && isTemperature) {  // 식물 2(몬스테라)는 온도가 점점 올라가도록
-      change = change.abs() * 0.5;  // 양수 변화만 허용하고 변화량 감소
-    } else if (plantId == '3' && isHumidity) {  // 식물 3(산세베리아)는 습도가 점점 떨어지도록
-      change = -change.abs() * 0.5;  // 음수 변화만 허용하고 변화량 감소
-    }
-
     // 새 값 계산
     double newValue = currentValue + change;
 
@@ -263,6 +234,9 @@ class MockApiService {
 
   // API 메서드: 모든 식물 종 목록 가져오기
   Future<List<PlantSpecies>> getSpecies() async {
+    // 초기화 확인
+    if (!_initialized) await init();
+
     // API 호출 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 800));
     return _species;
@@ -270,6 +244,9 @@ class MockApiService {
 
   // API 메서드: 모든 식물 목록 가져오기
   Future<List<Plant>> getPlants() async {
+    // 초기화 확인
+    if (!_initialized) await init();
+
     // API 호출 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 1000));
     return _plants;
@@ -277,8 +254,16 @@ class MockApiService {
 
   // API 메서드: 새 식물 등록하기
   Future<Plant> addPlant(Plant plant) async {
+    // 초기화 확인
+    if (!_initialized) await init();
+
     // API 호출 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 1200));
+
+    // 이미 식물이 있는지 확인
+    if (_plants.isNotEmpty) {
+      throw Exception('식물은 한 개만 추가할 수 있습니다.');
+    }
 
     // 새 식물에 ID 부여
     final newPlant = Plant(
@@ -326,6 +311,9 @@ class MockApiService {
 
   // API 메서드: 특정 식물의 센서 데이터 가져오기
   Future<List<SensorData>> getPlantData(String plantId) async {
+    // 초기화 확인
+    if (!_initialized) await init();
+
     // API 호출 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 900));
     return _sensorData[plantId] ?? [];
@@ -333,6 +321,9 @@ class MockApiService {
 
   // API 메서드: 특정 식물의 최신 센서 데이터만 가져오기
   Future<SensorData?> getLatestData(String plantId) async {
+    // 초기화 확인
+    if (!_initialized) await init();
+
     // API 호출 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 500));
     final data = _sensorData[plantId];

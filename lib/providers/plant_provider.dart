@@ -30,6 +30,9 @@ class PlantProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
+  // 식물이 이미 한 개 있는지 확인하는 getter
+  bool get hasPlant => _plants.isNotEmpty;
+
   // 생성자
   PlantProvider({this.testMode = false}) {
     // 테스트 모드에 따라 적절한 서비스 사용
@@ -72,6 +75,10 @@ class PlantProvider with ChangeNotifier {
 
     try {
       _plants = await _apiService.getPlants();
+      // 이전에 여러 식물이 있었다면 첫 번째 식물만 유지
+      if (_plants.length > 1) {
+        _plants = [_plants.first];
+      }
       _setError(null);
     } catch (e) {
       _setError('식물 목록을 불러오는데 실패했습니다: $e');
@@ -85,6 +92,12 @@ class PlantProvider with ChangeNotifier {
     _setLoading(true);
 
     try {
+      // 이미 식물이 있는지 확인
+      if (hasPlant) {
+        _setError('식물은 한 개만 추가할 수 있습니다.');
+        return null;
+      }
+
       // 새 식물 객체 생성
       final newPlant = Plant(
         id: DateTime.now().millisecondsSinceEpoch.toString(), // 임시 ID
@@ -108,6 +121,8 @@ class PlantProvider with ChangeNotifier {
       _setLoading(false);
     }
   }
+
+  // 나머지 메서드는 그대로 유지...
 
   // 특정 식물의 데이터 새로고침
   Future<void> refreshPlantData(String plantId) async {

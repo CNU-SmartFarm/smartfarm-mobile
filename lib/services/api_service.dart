@@ -37,7 +37,10 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        return data.map((json) => Plant.fromJson(json)).toList();
+        final plants = data.map((json) => Plant.fromJson(json)).toList();
+
+        // 서버에서 여러 식물이 반환되더라도 첫 번째 식물만 사용
+        return plants.isEmpty ? [] : [plants.first];
       } else {
         throw Exception('식물 목록을 불러오는데 실패했습니다. 상태 코드: ${response.statusCode}');
       }
@@ -50,6 +53,12 @@ class ApiService {
   // 새 식물 등록하기
   Future<Plant> addPlant(Plant plant) async {
     try {
+      // 이미 식물이 있는지 확인
+      final existingPlants = await _getLocalPlants();
+      if (existingPlants.isNotEmpty) {
+        throw Exception('식물은 한 개만 추가할 수 있습니다.');
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl$_plantsEndpoint'),
         headers: {'Content-Type': 'application/json'},
@@ -68,6 +77,11 @@ class ApiService {
         throw Exception('식물 등록에 실패했습니다. 상태 코드: ${response.statusCode}');
       }
     } catch (e) {
+      // 이미 식물이 있는 경우 예외 전달
+      if (e.toString().contains('식물은 한 개만 추가할 수 있습니다')) {
+        rethrow;
+      }
+
       // 개발 테스트용: 네트워크 오류 시 임시 ID 생성하여 로컬에만 저장
       final tempPlant = Plant(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -129,9 +143,12 @@ class ApiService {
       final prefs = await SharedPreferences.getInstance();
       final plantsJson = prefs.getStringList('plants') ?? [];
 
-      return plantsJson
+      final plants = plantsJson
           .map((plantStr) => Plant.fromJson(json.decode(plantStr)))
           .toList();
+
+      // 여러 식물이 저장되어 있더라도 첫 번째 식물만 반환
+      return plants.isEmpty ? [] : [plants.first];
     } catch (e) {
       return [];
     }
@@ -141,30 +158,9 @@ class ApiService {
   Future<void> _saveLocalPlant(Plant plant) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      List<String> plantsJson = prefs.getStringList('plants') ?? [];
 
-      // 기존 식물이 있는지 확인
-      int existingIndex = -1;
-      List<Plant> plants = plantsJson
-          .map((plantStr) => Plant.fromJson(json.decode(plantStr)))
-          .toList();
-
-      for (int i = 0; i < plants.length; i++) {
-        if (plants[i].id == plant.id) {
-          existingIndex = i;
-          break;
-        }
-      }
-
-      if (existingIndex >= 0) {
-        // 기존 식물 업데이트
-        plantsJson[existingIndex] = json.encode(plant.toJson());
-      } else {
-        // 새 식물 추가
-        plantsJson.add(json.encode(plant.toJson()));
-      }
-
-      await prefs.setStringList('plants', plantsJson);
+      // 기존 식물 목록을 지우고 새 식물만 저장
+      await prefs.setStringList('plants', [json.encode(plant.toJson())]);
     } catch (e) {
       // 저장 실패 시 로그만 출력
       print('로컬 저장 실패: $e');

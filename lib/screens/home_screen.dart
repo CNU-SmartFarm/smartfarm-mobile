@@ -102,15 +102,38 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _addNewPlant(context),
-        child: const Icon(Icons.add),
-        tooltip: '새 식물 추가',
+      // 식물이 있는 경우 추가 버튼을 표시하지 않음
+      floatingActionButton: Consumer<PlantProvider>(
+        builder: (context, plantProvider, child) {
+          // 식물이 없는 경우에만 버튼 표시
+          if (!plantProvider.hasPlant) {
+            return FloatingActionButton(
+              onPressed: () => _addNewPlant(context),
+              child: const Icon(Icons.add),
+              tooltip: '새 식물 추가',
+            );
+          }
+          // 이미 식물이 있으면 버튼 숨김
+          return const SizedBox.shrink();
+        },
       ),
     );
   }
 
   void _addNewPlant(BuildContext context) async {
+    final plantProvider = Provider.of<PlantProvider>(context, listen: false);
+
+    // 이미 식물이 있으면 알림 표시하고 진행하지 않음
+    if (plantProvider.hasPlant) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('식물은 한 개만 추가할 수 있습니다.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -120,6 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// PlantCard 클래스는 변경 없음
 class PlantCard extends StatelessWidget {
   final Plant plant;
   final PlantSpecies? species;
