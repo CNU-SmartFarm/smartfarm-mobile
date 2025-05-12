@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'package:smartfarm/sensor_graph_page.dart';
 
 class Plant extends StatefulWidget {
   const Plant({Key? key}) : super(key: key);
@@ -9,13 +10,15 @@ class Plant extends StatefulWidget {
 }
 
 class _PlantState extends State<Plant> {
-  double moisture = 40.0; //수분
-  double light = 75.0;    //광량
-  double temperature = 24.5; //온도
-  double humidity = 55.0;    //습도
+  final Map<String, bool> _isPressed = {};
 
   @override
   Widget build(BuildContext context) {
+    final List<double> moistureValues = [30, 32, 34, 36, 38, 40];
+    final List<double> lightValues = [70, 72, 74, 76, 78, 80];
+    final List<double> temperatureValues = [22, 23, 24, 24.5, 25, 25.5];
+    final List<double> humidityValues = [50, 52, 54, 55, 56, 58];
+
     return Scaffold(
       appBar: AppBar(
           backgroundColor: Colors.lightGreen.shade200,
@@ -43,16 +46,16 @@ class _PlantState extends State<Plant> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildSensorCard(Icons.water_drop, '수분', '$moisture%'),
-                _buildSensorCard(Icons.wb_sunny, '빛', '$light%'),
+                _buildSensorCard(Icons.water_drop, '수분', '${moistureValues.last}%', moistureValues, Colors.blue),
+                _buildSensorCard(Icons.wb_sunny, '조도', '${lightValues.last}%', lightValues, Colors.amber),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildSensorCard(Icons.thermostat, '온도', '$temperature°C'),
-                _buildSensorCard(Icons.water, '습도', '$humidity%'),
+                _buildSensorCard(Icons.thermostat, '온도', '${temperatureValues.last}°C', temperatureValues, Colors.redAccent),
+                _buildSensorCard(Icons.water, '습도', '${humidityValues.last}%', humidityValues, Colors.teal),
               ],
             ),
           ],
@@ -60,48 +63,6 @@ class _PlantState extends State<Plant> {
       ),
     );
   }
-
-//   Widget _buildCard({
-//     required String title,
-//     required String valueText,
-//     required double value,
-//     required Color color,
-// }) {
-//     return Card(
-//       elevation: 4,
-//       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-//       child: Padding(
-//         padding: const EdgeInsets.all(16),
-//         child: Row(
-//           children: [
-//             Expanded(
-//               child: Column(
-//                 crossAxisAlignment: CrossAxisAlignment.start,
-//                 children: [
-//                   Text(title,
-//                     style: const TextStyle(
-//                       fontWeight: FontWeight.bold, fontSize: 16)),
-//                   const SizedBox(height: 8),
-//                   LinearProgressIndicator(
-//                     value: value,
-//                     color: color,
-//                     backgroundColor: Colors.grey.shade300,
-//                     minHeight: 10,
-//                   ),
-//                 ],
-//               ),
-//             ),
-//             const SizedBox(width: 16),
-//             Text(
-//               valueText,
-//               style: const TextStyle(
-//                 fontSize: 16, fontWeight: FontWeight.bold),
-//               ),
-//             ],
-//         ),
-//       ),
-//     );
-//   }
 
   Widget _buildPlantStatus() {
     return Card(
@@ -124,22 +85,48 @@ class _PlantState extends State<Plant> {
     );
   }
 
-  Widget _buildSensorCard(IconData icon, String label, String value) {
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.4,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Icon(icon, size: 30, color: Colors.grey.shade700),
-            const SizedBox(height: 10),
-            Text(label, style: const TextStyle(fontSize: 14)),
-            Text(value,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold, fontSize: 16)),
-          ],
+  Widget _buildSensorCard(IconData icon, String label, String value, List<double> values, Color iconColor) {
+    final isPressed = _isPressed[label] ?? false;
+
+    return GestureDetector(
+      onTapDown: (_) {
+        setState(() => _isPressed[label] = true);
+      },
+      onTapUp: (_) {
+        setState(() => _isPressed[label] = false);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SensorGraphPage(
+                sensorName: label,
+                values: values,
+            ),
+          ),
+        );
+      },
+      onTapCancel: () {
+        setState(() => _isPressed[label] = false);
+      },
+      child: AnimatedScale(
+          scale: isPressed ? 0.95 : 1.0,
+          duration: const Duration(milliseconds: 100),
+        child: Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.4,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Icon(icon, size: 30, color: iconColor),
+                const SizedBox(height: 10),
+                Text(label, style: const TextStyle(fontSize: 14)),
+                Text(value,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16)),
+              ],
+            ),
+          ),
         ),
       ),
     );
