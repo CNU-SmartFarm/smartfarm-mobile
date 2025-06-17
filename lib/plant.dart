@@ -3,7 +3,8 @@ import 'package:lottie/lottie.dart';
 import 'package:smartfarm/sensor_graph_page.dart';
 
 class Plant extends StatefulWidget {
-  const Plant({Key? key}) : super(key: key);
+  final String plantName;
+  const Plant({Key? key, required this.plantName}) : super(key: key);
 
   @override
   State<Plant> createState() => _PlantState();
@@ -78,6 +79,14 @@ class _PlantState extends State<Plant> {
             width: 100,
             height: 100,
             fit: BoxFit.contain,
+            ),
+            Text(
+              widget.plantName,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.green,
+              ),
             ),
           ],
         ),

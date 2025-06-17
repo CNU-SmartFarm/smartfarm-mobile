@@ -33,10 +33,10 @@ class SensorGraphPage extends StatelessWidget {
         'minY': 0.0,
         'maxY': 100.0,
         'recommended': '50~70%',
-        'icon': Icons.water_drop,
+        'icon': Icons.water,
         'title': '습도',
       },
-      '빛': {
+      '조도': {
         'unit': '%',
         'minY': 0.0,
         'maxY': 100.0,
