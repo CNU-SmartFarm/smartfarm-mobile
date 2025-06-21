@@ -1,132 +1,70 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import '../models/app_models.dart';
 import '../helpers/api_exception.dart';
 
 class ApiService {
   static const String baseUrl = 'http://43.201.68.168:8080/api';
+  static const Duration timeoutDuration = Duration(seconds: 30);
+
   static const Map<String, String> headers = {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   };
-  static const Duration timeout = Duration(seconds: 10);
+
+  // HTTP 클라이언트 설정
+  static http.Client get _client {
+    return http.Client();
+  }
 
   // 응답 처리 헬퍼 메서드
   static Map<String, dynamic> _handleResponse(http.Response response) {
+    print('API Response [${response.statusCode}]: ${response.body}');
+
     if (response.statusCode >= 200 && response.statusCode < 300) {
+      if (response.body.isEmpty) {
+        return {'success': true};
+      }
+
       try {
-        return jsonDecode(response.body);
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        } else {
+          return {'data': decoded};
+        }
       } catch (e) {
+        print('JSON decode error: $e');
         throw ApiException('Invalid JSON response', statusCode: response.statusCode);
       }
     } else {
+      String errorMessage = 'API request failed';
+      try {
+        final errorBody = jsonDecode(response.body);
+        if (errorBody is Map<String, dynamic>) {
+          errorMessage = errorBody['message'] ?? errorBody['error'] ?? errorMessage;
+        }
+      } catch (e) {
+        errorMessage = response.body.isNotEmpty ? response.body : errorMessage;
+      }
+
       throw ApiException(
-        'API request failed: ${response.body}',
+        errorMessage,
         statusCode: response.statusCode,
+        errorCode: response.statusCode.toString(),
       );
     }
-  }
-
-  // Mock 센서 데이터 생성
-  static SensorData _generateMockSensorData(String plantId) {
-    final random = Random();
-    return SensorData(
-      id: 'sensor_${DateTime.now().millisecondsSinceEpoch}',
-      plantId: plantId,
-      temperature: 20.0 + random.nextDouble() * 8.0, // 20-28도
-      humidity: 45.0 + random.nextDouble() * 25.0, // 45-70%
-      soilMoisture: 35.0 + random.nextDouble() * 30.0, // 35-65%
-      light: 40.0 + random.nextDouble() * 40.0, // 40-80%
-      timestamp: DateTime.now(),
-    );
-  }
-
-  // Mock 과거 데이터 생성
-  static List<HistoricalDataPoint> _generateMockHistoricalData(String plantId, String period) {
-    final random = Random();
-    List<HistoricalDataPoint> data = [];
-
-    int dataPoints;
-    Duration interval;
-
-    switch (period) {
-      case '24h':
-        dataPoints = 24;
-        interval = Duration(hours: 1);
-        break;
-      case '7d':
-        dataPoints = 14;
-        interval = Duration(hours: 12);
-        break;
-      case '30d':
-        dataPoints = 30;
-        interval = Duration(days: 1);
-        break;
-      case '90d':
-        dataPoints = 30;
-        interval = Duration(days: 3);
-        break;
-      default:
-        dataPoints = 24;
-        interval = Duration(hours: 1);
-    }
-
-    DateTime now = DateTime.now();
-
-    for (int i = dataPoints - 1; i >= 0; i--) {
-      DateTime timestamp = now.subtract(interval * i);
-
-      data.add(HistoricalDataPoint(
-        id: 'data_${timestamp.millisecondsSinceEpoch}',
-        plantId: plantId,
-        date: timestamp.toIso8601String().split('T')[0],
-        time: timestamp.hour,
-        temperature: 18.0 + random.nextDouble() * 10.0,
-        humidity: 40.0 + random.nextDouble() * 30.0,
-        soilMoisture: 30.0 + random.nextDouble() * 40.0,
-        light: 35.0 + random.nextDouble() * 45.0,
-      ));
-    }
-
-    return data;
-  }
-
-  // Mock 알림 데이터 생성
-  static List<NotificationItem> _generateMockNotifications(String plantId) {
-    final random = Random();
-    List<NotificationItem> notifications = [];
-
-    List<String> messages = [
-      '토양 수분이 부족합니다. 물을 주세요.',
-      '조도가 낮습니다. 더 밝은 곳으로 이동하세요.',
-      '온도가 최적 범위를 벗어났습니다.',
-      '습도가 너무 낮습니다.',
-      '식물 상태가 양호합니다.',
-      '센서 연결을 확인해주세요.',
-    ];
-
-    List<String> types = ['warning', 'info', 'error', 'success'];
-
-    for (int i = 0; i < 5; i++) {
-      notifications.add(NotificationItem(
-        id: i + 1,
-        plantId: plantId,
-        type: types[random.nextInt(types.length)],
-        message: messages[random.nextInt(messages.length)],
-        timestamp: DateTime.now().subtract(Duration(hours: i * 2)),
-        isRead: random.nextBool(),
-      ));
-    }
-
-    return notifications;
   }
 
   // 식물 등록
   static Future<Plant?> registerPlant(Plant plant) async {
     try {
-      final response = await http.post(
+      print('Registering plant: ${plant.name}');
+
+      final client = _client;
+      final response = await client.post(
         Uri.parse('$baseUrl/plants'),
         headers: headers,
         body: jsonEncode({
@@ -141,57 +79,86 @@ class ApiService {
           'optimalLightMin': plant.optimalLightMin,
           'optimalLightMax': plant.optimalLightMax,
         }),
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 201) {
-        final data = _handleResponse(response);
-        return Plant.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('id')) {
+        return Plant.fromJson(data['data'] ?? data);
       }
+
       return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } on HttpException {
+      throw ApiException('서버 연결에 실패했습니다.');
     } catch (e) {
       print('Error registering plant: $e');
-
-      // API 실패 시 Mock 데이터로 식물 등록
-      return Plant(
-        id: 'plant_${DateTime.now().millisecondsSinceEpoch}',
-        name: plant.name,
-        species: plant.species,
-        registeredDate: DateTime.now().toString().split(' ')[0],
-        optimalTempMin: plant.optimalTempMin,
-        optimalTempMax: plant.optimalTempMax,
-        optimalHumidityMin: plant.optimalHumidityMin,
-        optimalHumidityMax: plant.optimalHumidityMax,
-        optimalSoilMoistureMin: plant.optimalSoilMoistureMin,
-        optimalSoilMoistureMax: plant.optimalSoilMoistureMax,
-        optimalLightMin: plant.optimalLightMin,
-        optimalLightMax: plant.optimalLightMax,
-      );
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 등록에 실패했습니다: $e');
     }
   }
 
   // 식물 정보 조회
   static Future<Plant?> getPlant(String plantId) async {
     try {
-      final response = await http.get(
+      print('Getting plant: $plantId');
+
+      final client = _client;
+      final response = await client.get(
         Uri.parse('$baseUrl/plants/$plantId'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
-        return Plant.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('id')) {
+        return Plant.fromJson(data['data'] ?? data);
       }
+
       return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error getting plant: $e');
-      return null;
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 정보를 가져오는데 실패했습니다: $e');
+    }
+  }
+
+  // 전체 식물 목록 조회
+  static Future<List<Plant>> getAllPlants() async {
+    try {
+      print('Getting all plants');
+
+      final client = _client;
+      final response = await client.get(
+        Uri.parse('$baseUrl/plants'),
+        headers: headers,
+      ).timeout(timeoutDuration);
+
+      final data = _handleResponse(response);
+      if (data.containsKey('data') && data['data'] is List) {
+        return (data['data'] as List)
+            .map((item) => Plant.fromJson(item))
+            .toList();
+      }
+
+      return [];
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } catch (e) {
+      print('Error getting plants: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 목록을 가져오는데 실패했습니다: $e');
     }
   }
 
   // 식물 정보 수정
   static Future<Plant?> updatePlant(String plantId, Plant plant) async {
     try {
-      final response = await http.put(
+      print('Updating plant: $plantId');
+
+      final client = _client;
+      final response = await client.put(
         Uri.parse('$baseUrl/plants/$plantId'),
         headers: headers,
         body: jsonEncode({
@@ -205,149 +172,216 @@ class ApiService {
           'optimalLightMin': plant.optimalLightMin,
           'optimalLightMax': plant.optimalLightMax,
         }),
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
-        return Plant.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('id')) {
+        return Plant.fromJson(data['data'] ?? data);
       }
+
       return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error updating plant: $e');
-
-      // API 실패 시 Mock으로 업데이트된 식물 반환
-      return plant;
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 정보 수정에 실패했습니다: $e');
     }
   }
 
   // 식물 삭제
   static Future<bool> deletePlant(String plantId) async {
     try {
-      final response = await http.delete(
+      print('Deleting plant: $plantId');
+
+      final client = _client;
+      final response = await client.delete(
         Uri.parse('$baseUrl/plants/$plantId'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      return response.statusCode == 204;
+      return response.statusCode == 200 || response.statusCode == 204;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error deleting plant: $e');
-
-      // API 실패 시에도 삭제 성공으로 처리 (로컬에서만 삭제됨)
-      return true;
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 삭제에 실패했습니다: $e');
     }
   }
 
-  // 현재 센서 데이터 조회 - Mock 데이터 우선 제공
+  // 현재 센서 데이터 조회
   static Future<SensorData?> getCurrentSensorData(String plantId) async {
     try {
-      final response = await http.get(
+      print('Getting current sensor data for plant: $plantId');
+
+      final client = _client;
+      final response = await client.get(
         Uri.parse('$baseUrl/plants/$plantId/sensors/current'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
-        return SensorData.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('id')) {
+        return SensorData.fromJson(data['data'] ?? data);
       }
-    } catch (e) {
-      print('Error getting sensor data, using mock data: $e');
-    }
 
-    // API 실패 시 Mock 데이터 반환
-    return _generateMockSensorData(plantId);
+      return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } catch (e) {
+      print('Error getting sensor data: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('센서 데이터를 가져오는데 실패했습니다: $e');
+    }
   }
 
-  // 과거 센서 데이터 조회 - Mock 데이터 우선 제공
+  // 과거 센서 데이터 조회
   static Future<List<HistoricalDataPoint>> getHistoricalData(
       String plantId, String period) async {
     try {
-      final response = await http.get(
+      print('Getting historical data for plant: $plantId, period: $period');
+
+      final client = _client;
+      final response = await client.get(
         Uri.parse('$baseUrl/plants/$plantId/sensors/history?period=$period'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') && data['data'] is List) {
         return (data['data'] as List)
             .map((item) => HistoricalDataPoint.fromJson(item))
             .toList();
       }
-    } catch (e) {
-      print('Error getting historical data, using mock data: $e');
-    }
 
-    // API 실패 시 Mock 데이터 반환
-    return _generateMockHistoricalData(plantId, period);
+      return [];
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } catch (e) {
+      print('Error getting historical data: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('과거 데이터를 가져오는데 실패했습니다: $e');
+    }
   }
 
-  // 알림 목록 조회 - Mock 데이터 우선 제공
-  static Future<List<NotificationItem>> getNotifications(String plantId,
-      {int limit = 10, int offset = 0, bool unreadOnly = false}) async {
+  // 센서 데이터 전송 (IoT 디바이스용)
+  static Future<bool> uploadSensorData(String plantId, SensorData sensorData) async {
     try {
+      print('Uploading sensor data for plant: $plantId');
+
+      final client = _client;
+      final response = await client.post(
+        Uri.parse('$baseUrl/plants/$plantId/sensors'),
+        headers: headers,
+        body: jsonEncode({
+          'temperature': sensorData.temperature,
+          'humidity': sensorData.humidity,
+          'soilMoisture': sensorData.soilMoisture,
+          'light': sensorData.light,
+          'timestamp': sensorData.timestamp.toIso8601String(),
+        }),
+      ).timeout(timeoutDuration);
+
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } catch (e) {
+      print('Error uploading sensor data: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('센서 데이터 전송에 실패했습니다: $e');
+    }
+  }
+
+  // 알림 목록 조회
+  static Future<List<NotificationItem>> getNotifications(String plantId,
+      {int limit = 20, int offset = 0, bool unreadOnly = false}) async {
+    try {
+      print('Getting notifications for plant: $plantId');
+
       final queryParams = {
         'limit': limit.toString(),
         'offset': offset.toString(),
-        'unreadOnly': unreadOnly.toString(),
+        if (unreadOnly) 'unreadOnly': 'true',
       };
+
       final uri = Uri.parse('$baseUrl/plants/$plantId/notifications')
           .replace(queryParameters: queryParams);
 
-      final response = await http.get(uri, headers: headers).timeout(timeout);
+      final client = _client;
+      final response = await client.get(uri, headers: headers).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') && data['data'] is List) {
         return (data['data'] as List)
             .map((item) => NotificationItem.fromJson(item))
             .toList();
       }
-    } catch (e) {
-      print('Error getting notifications, using mock data: $e');
-    }
 
-    // API 실패 시 Mock 데이터 반환
-    return _generateMockNotifications(plantId);
+      return [];
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
+    } catch (e) {
+      print('Error getting notifications: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('알림을 가져오는데 실패했습니다: $e');
+    }
   }
 
   // 알림 읽음 처리
   static Future<bool> markNotificationAsRead(int notificationId) async {
     try {
-      final response = await http.put(
+      print('Marking notification as read: $notificationId');
+
+      final client = _client;
+      final response = await client.put(
         Uri.parse('$baseUrl/notifications/$notificationId/read'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      return response.statusCode == 200;
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error marking notification as read: $e');
-
-      // API 실패 시에도 성공으로 처리 (로컬에서만 처리됨)
-      return true;
+      if (e is ApiException) rethrow;
+      throw ApiException('알림 읽음 처리에 실패했습니다: $e');
     }
   }
 
   // 사용자 설정 조회
   static Future<Settings?> getSettings() async {
     try {
-      final response = await http.get(
+      print('Getting user settings');
+
+      final client = _client;
+      final response = await client.get(
         Uri.parse('$baseUrl/settings'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
-        return Settings.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('userId')) {
+        return Settings.fromJson(data['data'] ?? data);
       }
+
+      return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error getting settings: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('설정을 가져오는데 실패했습니다: $e');
     }
-
-    return null;
   }
 
   // 사용자 설정 업데이트
   static Future<Settings?> updateSettings(Settings settings) async {
     try {
-      final response = await http.put(
+      print('Updating user settings');
+
+      final client = _client;
+      final response = await client.put(
         Uri.parse('$baseUrl/settings'),
         headers: headers,
         body: jsonEncode({
@@ -355,44 +389,56 @@ class ApiService {
           'language': settings.language,
           'theme': settings.theme,
         }),
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
-        return Settings.fromJson(data['data']);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') || data.containsKey('userId')) {
+        return Settings.fromJson(data['data'] ?? data);
       }
+
+      return null;
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error updating settings: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('설정 업데이트에 실패했습니다: $e');
     }
-
-    // API 실패 시 입력받은 설정을 그대로 반환
-    return settings;
   }
 
   // 식물 프로파일 목록 조회
   static Future<List<PlantProfile>> getPlantProfiles() async {
     try {
-      final response = await http.get(
+      print('Getting plant profiles');
+
+      final client = _client;
+      final response = await client.get(
         Uri.parse('$baseUrl/plant-profiles'),
         headers: headers,
-      ).timeout(timeout);
+      ).timeout(timeoutDuration);
 
-      if (response.statusCode == 200) {
-        final data = _handleResponse(response);
+      final data = _handleResponse(response);
+      if (data.containsKey('data') && data['data'] is List) {
         return (data['data'] as List)
             .map((item) => PlantProfile.fromJson(item))
             .toList();
       }
+
+      return [];
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error getting plant profiles: $e');
+      if (e is ApiException) rethrow;
+      throw ApiException('식물 프로파일을 가져오는데 실패했습니다: $e');
     }
-
-    return [];
   }
 
   // AI 식물 인식 (PlantNet API 사용)
   static Future<AIIdentificationResult?> identifyPlant(File imageFile) async {
     try {
+      print('Identifying plant with AI');
+
       const String plantNetApiKey = '2b100lI28FM1Ei8FdhK8ddP5Y';
       const String plantNetUrl = 'https://my-api.plantnet.org/v2/identify/all';
 
@@ -415,23 +461,22 @@ class ApiService {
         ),
       );
 
-      final response = await request.send().timeout(Duration(seconds: 30));
+      final streamedResponse = await request.send().timeout(timeoutDuration);
+      final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
-        final responseData = await response.stream.bytesToString();
-        final data = jsonDecode(responseData);
-
-        // PlantNet API 응답을 우리 모델에 맞게 변환
+        final data = jsonDecode(response.body);
         return _parsePlantNetResponse(data);
       } else {
-        print('PlantNet API Error: ${response.statusCode}');
-        return null;
+        print('PlantNet API Error: ${response.statusCode} - ${response.body}');
+        throw ApiException('AI 인식 서비스 오류 (${response.statusCode})');
       }
+    } on SocketException {
+      throw ApiException('네트워크 연결을 확인해주세요.');
     } catch (e) {
       print('Error identifying plant: $e');
-
-      // AI 인식 실패 시 null 반환
-      return null;
+      if (e is ApiException) rethrow;
+      throw ApiException('AI 식물 인식에 실패했습니다: $e');
     }
   }
 
@@ -568,5 +613,28 @@ class ApiService {
       'optimalLightMin': 60,
       'optimalLightMax': 90,
     };
+  }
+
+  // 연결 테스트
+  static Future<bool> testConnection() async {
+    try {
+      print('Testing API connection');
+
+      final client = _client;
+      final response = await client.get(
+        Uri.parse('$baseUrl/health'),
+        headers: headers,
+      ).timeout(Duration(seconds: 10));
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Connection test failed: $e');
+      return false;
+    }
+  }
+
+  // 리소스 정리
+  static void dispose() {
+    // 필요시 클린업 로직 추가
   }
 }

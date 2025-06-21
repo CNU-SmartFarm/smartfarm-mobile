@@ -14,12 +14,13 @@ import 'helpers/network_helper.dart';
 import 'helpers/sync_helper.dart';
 import 'helpers/notification_helper.dart';
 import 'helpers/permission_helper.dart';
+import 'services/api_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
-    // 헬퍼들 초기화
+    // 기본 헬퍼들 초기화
     await CacheHelper.initialize();
     NetworkHelper.initialize();
 
@@ -143,6 +144,7 @@ class AppInitializer extends StatefulWidget {
 class _AppInitializerState extends State<AppInitializer> {
   bool _isInitialized = false;
   String? _initError;
+  String _currentStep = '초기화 중...';
 
   @override
   void initState() {
@@ -155,6 +157,29 @@ class _AppInitializerState extends State<AppInitializer> {
 
   Future<void> _initializeApp() async {
     try {
+      setState(() {
+        _currentStep = '네트워크 연결 확인 중...';
+      });
+
+      // 네트워크 연결 확인
+      final isConnected = await NetworkHelper.checkConnection();
+
+      if (isConnected) {
+        setState(() {
+          _currentStep = 'API 서버 연결 확인 중...';
+        });
+
+        // API 서버 연결 테스트
+        final apiConnected = await ApiService.testConnection();
+        if (!apiConnected) {
+          print('Warning: API server connection failed, running in offline mode');
+        }
+      }
+
+      setState(() {
+        _currentStep = '설정 초기화 중...';
+      });
+
       // Provider들을 listen: false로 가져와서 빌드 중 상태 변경 방지
       final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
       final plantProvider = Provider.of<PlantProvider>(context, listen: false);
@@ -162,35 +187,72 @@ class _AppInitializerState extends State<AppInitializer> {
       // 설정 초기화
       await settingsProvider.initializeSettings();
 
-      // 식물 프로파일 로드
-      await plantProvider.loadPlantProfiles();
+      setState(() {
+        _currentStep = '식물 프로파일 로드 중...';
+      });
 
-      // 네트워크 연결 확인
-      await NetworkHelper.checkConnection();
+      // 식물 데이터 초기화
+      await plantProvider.initialize();
 
-      // 마지막 식물 ID 복원
-      final lastPlantId = CacheHelper.getString(CacheHelper.CURRENT_PLANT_ID);
-      if (lastPlantId != null && lastPlantId.isNotEmpty) {
-        // 실제 구현에서는 여기서 식물 정보를 로드해야 함
-        // await plantProvider.loadPlant(lastPlantId);
-      }
+      setState(() {
+        _currentStep = '동기화 시작 중...';
+      });
+
+      // 네트워크 상태 변화 리스너 등록
+      NetworkHelper.initialize();
 
       // 동기화 시작
-      SyncHelper.startPeriodicSync();
+      if (NetworkHelper.isOnline) {
+        SyncHelper.startPeriodicSync();
 
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
+        // 초기 동기화 실행
+        unawaited(SyncHelper.syncData());
       }
+
+      // 네트워크 상태 변화 감지
+      _setupNetworkListener();
+
+      setState(() {
+        _isInitialized = true;
+        _currentStep = '완료';
+      });
+
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _initError = e.toString();
-        });
-      }
+      setState(() {
+        _initError = e.toString();
+        _currentStep = '초기화 실패';
+      });
       print('앱 초기화 오류: $e');
     }
+  }
+
+  void _setupNetworkListener() {
+    // 네트워크 상태 변화 감지 및 동기화
+    Timer.periodic(Duration(seconds: 5), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      NetworkHelper.checkConnection().then((isOnline) {
+        if (isOnline && !SyncHelper.isSyncing) {
+          SyncHelper.onConnectionChanged(true);
+        }
+      });
+    });
+  }
+
+  void _retryInitialization() {
+    setState(() {
+      _initError = null;
+      _isInitialized = false;
+      _currentStep = '다시 시도 중...';
+    });
+
+    // 약간의 지연 후 다시 초기화 시도
+    Future.delayed(Duration(milliseconds: 500), () {
+      _initializeApp();
+    });
   }
 
   @override
@@ -198,39 +260,57 @@ class _AppInitializerState extends State<AppInitializer> {
     if (_initError != null) {
       return Scaffold(
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.error_outline, size: 64, color: Colors.red),
-              SizedBox(height: 16),
-              Text(
-                '초기화 실패',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 32),
-                child: Text(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: Colors.red),
+                SizedBox(height: 16),
+                Text(
+                  '초기화 실패',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 8),
+                Text(
                   _initError!,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey[600]),
                 ),
-              ),
-              SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    _initError = null;
-                    _isInitialized = false;
-                  });
-                  // 다시 초기화 시도
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _initializeApp();
-                  });
-                },
-                child: Text('다시 시도'),
-              ),
-            ],
+                SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _retryInitialization,
+                      icon: Icon(Icons.refresh),
+                      label: Text('다시 시도'),
+                    ),
+                    SizedBox(width: 16),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        // 오프라인 모드로 시작
+                        setState(() {
+                          _initError = null;
+                          _isInitialized = true;
+                          _currentStep = '오프라인 모드';
+                        });
+                      },
+                      icon: Icon(Icons.wifi_off),
+                      label: Text('오프라인 모드'),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 16),
+                Text(
+                  '네트워크 연결을 확인해주세요',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -243,23 +323,23 @@ class _AppInitializerState extends State<AppInitializer> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 80,
-                height: 80,
+                width: 100,
+                height: 100,
                 decoration: BoxDecoration(
                   color: Color(0xFFF1F8E9),
-                  borderRadius: BorderRadius.circular(40),
+                  borderRadius: BorderRadius.circular(50),
                 ),
                 child: Icon(
                   Icons.eco_outlined,
-                  size: 40,
+                  size: 50,
                   color: Color(0xFF66BB6A),
                 ),
               ),
-              SizedBox(height: 24),
+              SizedBox(height: 32),
               Text(
                 '스마트팜',
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: 28,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF2E7D32),
                 ),
@@ -268,17 +348,56 @@ class _AppInitializerState extends State<AppInitializer> {
               Text(
                 '가정용 식물 관리 시스템',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 16,
                   color: Color(0xFF666666),
                 ),
               ),
-              SizedBox(height: 32),
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text(
-                '앱을 초기화하는 중...',
-                style: TextStyle(color: Color(0xFF666666)),
+              SizedBox(height: 48),
+              SizedBox(
+                width: 200,
+                child: Column(
+                  children: [
+                    LinearProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF66BB6A)),
+                      backgroundColor: Color(0xFFE8F5E8),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      _currentStep,
+                      style: TextStyle(
+                        color: Color(0xFF666666),
+                        fontSize: 14,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
               ),
+              SizedBox(height: 32),
+              if (!NetworkHelper.isOnline) ...[
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    border: Border.all(color: Colors.orange[200]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.wifi_off, color: Colors.orange[700], size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        '오프라인 모드',
+                        style: TextStyle(
+                          color: Colors.orange[700],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -294,7 +413,7 @@ class SmartFarmApp extends StatefulWidget {
   _SmartFarmAppState createState() => _SmartFarmAppState();
 }
 
-class _SmartFarmAppState extends State<SmartFarmApp> {
+class _SmartFarmAppState extends State<SmartFarmApp> with WidgetsBindingObserver {
   final List<Widget> _screens = [
     HomeScreen(),
     HistoryScreen(),
@@ -303,10 +422,59 @@ class _SmartFarmAppState extends State<SmartFarmApp> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     SyncHelper.stopPeriodicSync();
     NetworkHelper.dispose();
+    ApiService.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+      // 앱이 다시 활성화되면 네트워크 상태 확인 및 동기화
+        _onAppResumed();
+        break;
+      case AppLifecycleState.paused:
+      // 앱이 백그라운드로 갈 때 동기화 중지
+        SyncHelper.stopPeriodicSync();
+        break;
+      default:
+        break;
+    }
+  }
+
+  Future<void> _onAppResumed() async {
+    try {
+      // 네트워크 상태 다시 확인
+      final isOnline = await NetworkHelper.checkConnection();
+
+      if (isOnline) {
+        // 온라인이면 동기화 재시작
+        SyncHelper.startPeriodicSync();
+
+        // 즉시 동기화 실행
+        unawaited(SyncHelper.syncData());
+
+        // PlantProvider 데이터도 새로고침
+        final plantProvider = Provider.of<PlantProvider>(context, listen: false);
+        if (plantProvider.hasPlant) {
+          unawaited(plantProvider.loadPlantData());
+        }
+      }
+    } catch (e) {
+      print('App resume error: $e');
+    }
   }
 
   @override
@@ -325,30 +493,58 @@ class _SmartFarmAppState extends State<SmartFarmApp> {
             actions: [
               // 네트워크 상태 표시
               if (!NetworkHelper.isOnline) ...[
-                Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(
-                    Icons.wifi_off,
-                    color: Colors.orange,
-                    size: 20,
+                Tooltip(
+                  message: '오프라인 모드',
+                  child: Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: Icon(
+                      Icons.wifi_off,
+                      color: Colors.orange,
+                      size: 20,
+                    ),
                   ),
                 ),
               ],
 
               // 동기화 상태 표시
               if (SyncHelper.isSyncing) ...[
-                Padding(
-                  padding: EdgeInsets.only(right: 16),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                Tooltip(
+                  message: '동기화 중',
+                  child: Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
                     ),
                   ),
                 ),
               ],
+
+              // 수동 새로고침 버튼
+              IconButton(
+                icon: Icon(Icons.refresh),
+                onPressed: NetworkHelper.isOnline && !SyncHelper.isSyncing
+                    ? () async {
+                  // 수동 동기화
+                  try {
+                    await SyncHelper.manualSync();
+                    if (plantProvider.hasPlant) {
+                      await plantProvider.loadPlantData();
+                    }
+                    NotificationHelper.showSuccessSnackBar(context, '동기화가 완료되었습니다.');
+                  } catch (e) {
+                    NotificationHelper.showErrorSnackBar(context, '동기화에 실패했습니다: $e');
+                  }
+                }
+                    : null,
+                tooltip: NetworkHelper.isOnline
+                    ? (SyncHelper.isSyncing ? '동기화 중...' : '수동 동기화')
+                    : '오프라인 상태',
+              ),
             ],
           ),
           body: IndexedStack(
@@ -388,7 +584,7 @@ class _SmartFarmAppState extends State<SmartFarmApp> {
                             minHeight: 16,
                           ),
                           child: Text(
-                            '${plantProvider.unreadNotificationsCount}',
+                            '${plantProvider.unreadNotificationsCount > 99 ? '99+' : plantProvider.unreadNotificationsCount}',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 10,

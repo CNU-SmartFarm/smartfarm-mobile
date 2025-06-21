@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:math';
+import 'dart:io';
 
 import '../models/app_models.dart';
 import '../services/api_service.dart';
 import '../helpers/network_helper.dart';
 import '../helpers/cache_helper.dart';
+import '../helpers/database_helper.dart';
 
 class PlantProvider extends ChangeNotifier {
   Plant? _plant;
@@ -17,6 +18,7 @@ class PlantProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   Timer? _sensorTimer;
+  final DatabaseHelper _dbHelper = DatabaseHelper();
 
   // Getters
   Plant? get plant => _plant;
@@ -42,6 +44,116 @@ class PlantProvider extends ChangeNotifier {
     if (_error != error) {
       _error = error;
       notifyListeners();
+    }
+  }
+
+  // 에러 클리어
+  void clearError() {
+    _setError(null);
+  }
+
+  // 앱 초기화 시 데이터 로드
+  Future<void> initialize() async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      // 식물 프로파일 로드
+      await loadPlantProfiles();
+
+      // 마지막 등록된 식물 ID 확인
+      final lastPlantId = CacheHelper.getString(CacheHelper.CURRENT_PLANT_ID);
+      if (lastPlantId != null && lastPlantId.isNotEmpty) {
+        await loadPlant(lastPlantId);
+      } else {
+        // 서버에서 사용자의 식물 목록 확인
+        await _loadUserPlants();
+      }
+
+    } catch (e) {
+      _setError('초기화 중 오류가 발생했습니다: $e');
+      print('Initialization error: $e');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 사용자의 식물 목록 로드
+  Future<void> _loadUserPlants() async {
+    try {
+      if (!NetworkHelper.isOnline) return;
+
+      List<Plant> plants = await ApiService.getAllPlants();
+      if (plants.isNotEmpty) {
+        // 첫 번째 식물을 현재 식물로 설정
+        _plant = plants.first;
+        await CacheHelper.setString(CacheHelper.CURRENT_PLANT_ID, _plant!.id);
+        await loadPlantData();
+        _startPeriodicUpdates();
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error loading user plants: $e');
+    }
+  }
+
+  // 특정 식물 로드
+  Future<void> loadPlant(String plantId) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      if (NetworkHelper.isOnline) {
+        Plant? plant = await ApiService.getPlant(plantId);
+        if (plant != null) {
+          _plant = plant;
+          await CacheHelper.setString(CacheHelper.CURRENT_PLANT_ID, plant.id);
+          await loadPlantData();
+          _startPeriodicUpdates();
+        } else {
+          _setError('식물 정보를 찾을 수 없습니다.');
+        }
+      } else {
+        // 오프라인 모드에서는 로컬 DB에서 로드
+        final plantData = await _dbHelper.getPlant(plantId);
+        if (plantData != null) {
+          _plant = Plant.fromJson(plantData);
+          await _loadOfflineData();
+        } else {
+          _setError('오프라인에서 식물 정보를 찾을 수 없습니다.');
+        }
+      }
+
+      notifyListeners();
+    } catch (e) {
+      _setError('식물 정보 로드 실패: $e');
+      print('Error loading plant: $e');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 오프라인 데이터 로드
+  Future<void> _loadOfflineData() async {
+    if (_plant == null) return;
+
+    try {
+      // 최신 센서 데이터 로드
+      final sensorDataMap = await _dbHelper.getLatestSensorData(_plant!.id);
+      if (sensorDataMap != null) {
+        _sensorData = SensorData.fromJson(sensorDataMap);
+      }
+
+      // 알림 로드
+      final notificationMaps = await _dbHelper.getNotifications(_plant!.id);
+      _notifications = notificationMaps.map((map) => NotificationItem.fromJson(map)).toList();
+
+      // 과거 데이터 로드
+      final historicalMaps = await _dbHelper.getHistoricalSensorData(_plant!.id, _selectedPeriod);
+      _historicalData = historicalMaps.map((map) => HistoricalDataPoint.fromJson(map)).toList();
+
+    } catch (e) {
+      print('Error loading offline data: $e');
     }
   }
 
@@ -190,6 +302,346 @@ class PlantProvider extends ChangeNotifier {
     return difference.inHours >= 24;
   }
 
+  // 식물 등록
+  Future<bool> registerPlant(Plant plant) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      Plant? registeredPlant;
+
+      if (NetworkHelper.isOnline) {
+        registeredPlant = await ApiService.registerPlant(plant);
+        if (registeredPlant != null) {
+          // 로컬 DB에도 저장
+          await _dbHelper.insertPlant(registeredPlant.toJson());
+        }
+      } else {
+        // 오프라인 모드에서는 로컬에만 저장
+        plant = plant.copyWith(id: DateTime.now().millisecondsSinceEpoch.toString());
+        await _dbHelper.insertPlant(plant.toJson());
+        registeredPlant = plant;
+      }
+
+      if (registeredPlant != null) {
+        _plant = registeredPlant;
+        await CacheHelper.setString(CacheHelper.CURRENT_PLANT_ID, registeredPlant.id);
+        await loadPlantData();
+        _startPeriodicUpdates();
+        notifyListeners();
+        return true;
+      } else {
+        _setError('식물 등록에 실패했습니다.');
+        return false;
+      }
+    } catch (e) {
+      _setError('식물 등록 중 오류가 발생했습니다: $e');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // AI 식물 등록 (실제 PlantNet API 사용)
+  Future<bool> registerPlantWithAI(File imageFile) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      if (!NetworkHelper.isOnline) {
+        _setError('AI 인식은 인터넷 연결이 필요합니다.');
+        return false;
+      }
+
+      // PlantNet API 호출
+      AIIdentificationResult? result = await ApiService.identifyPlant(imageFile);
+
+      if (result == null) {
+        _setError('식물을 인식할 수 없습니다. 다시 시도해주세요.');
+        return false;
+      }
+
+      if (result.confidence < 0.3) {
+        _setError('식물 인식 정확도가 낮습니다 (${(result.confidence * 100).toStringAsFixed(1)}%). 더 선명한 사진으로 다시 시도해주세요.');
+        return false;
+      }
+
+      Plant aiRecognizedPlant = Plant(
+        id: '', // API에서 생성됨
+        name: result.suggestedName,
+        species: result.species,
+        registeredDate: DateTime.now().toString().split(' ')[0],
+        optimalTempMin: result.optimalSettings['optimalTempMin']!,
+        optimalTempMax: result.optimalSettings['optimalTempMax']!,
+        optimalHumidityMin: result.optimalSettings['optimalHumidityMin']!,
+        optimalHumidityMax: result.optimalSettings['optimalHumidityMax']!,
+        optimalSoilMoistureMin: result.optimalSettings['optimalSoilMoistureMin']!,
+        optimalSoilMoistureMax: result.optimalSettings['optimalSoilMoistureMax']!,
+        optimalLightMin: result.optimalSettings['optimalLightMin']!,
+        optimalLightMax: result.optimalSettings['optimalLightMax']!,
+      );
+
+      bool success = await registerPlant(aiRecognizedPlant);
+
+      if (success) {
+        print('AI 인식 성공: ${result.species}, 정확도: ${(result.confidence * 100).toStringAsFixed(1)}%');
+      }
+
+      return success;
+    } catch (e) {
+      _setError('AI 인식에 실패했습니다: $e');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 식물 정보 업데이트
+  Future<bool> updatePlant(Plant updatedPlant) async {
+    if (_plant == null) return false;
+
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      Plant? result;
+
+      if (NetworkHelper.isOnline) {
+        result = await ApiService.updatePlant(_plant!.id, updatedPlant);
+        if (result != null) {
+          // 로컬 DB도 업데이트
+          await _dbHelper.updatePlant(result.id, result.toJson());
+        }
+      } else {
+        // 오프라인 모드에서는 로컬만 업데이트
+        await _dbHelper.updatePlant(_plant!.id, updatedPlant.toJson());
+        result = updatedPlant;
+      }
+
+      if (result != null) {
+        _plant = result;
+        notifyListeners();
+        return true;
+      } else {
+        _setError('식물 정보 업데이트에 실패했습니다.');
+        return false;
+      }
+    } catch (e) {
+      _setError('식물 정보 업데이트 중 오류가 발생했습니다: $e');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 식물 삭제
+  Future<bool> deletePlant() async {
+    if (_plant == null) return false;
+
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      bool success = false;
+
+      if (NetworkHelper.isOnline) {
+        success = await ApiService.deletePlant(_plant!.id);
+      } else {
+        success = true; // 오프라인에서는 로컬에서만 삭제
+      }
+
+      if (success) {
+        // 로컬 DB에서도 삭제
+        await _dbHelper.deletePlant(_plant!.id);
+
+        _plant = null;
+        _sensorData = null;
+        _notifications.clear();
+        _historicalData.clear();
+        _stopPeriodicUpdates();
+        await CacheHelper.remove(CacheHelper.CURRENT_PLANT_ID);
+        notifyListeners();
+        return true;
+      } else {
+        _setError('식물 삭제에 실패했습니다.');
+        return false;
+      }
+    } catch (e) {
+      _setError('식물 삭제 중 오류가 발생했습니다: $e');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 식물 데이터 로드
+  Future<void> loadPlantData() async {
+    if (_plant == null) return;
+
+    try {
+      _setError(null);
+
+      if (NetworkHelper.isOnline) {
+        // 온라인 모드: API에서 데이터 로드
+        final results = await Future.wait([
+          ApiService.getCurrentSensorData(_plant!.id),
+          ApiService.getNotifications(_plant!.id),
+          ApiService.getHistoricalData(_plant!.id, _selectedPeriod),
+        ]);
+
+        _sensorData = results[0] as SensorData?;
+        _notifications = results[1] as List<NotificationItem>;
+        _historicalData = results[2] as List<HistoricalDataPoint>;
+
+        // 로컬 DB에도 저장
+        if (_sensorData != null) {
+          await _dbHelper.insertSensorData(_sensorData!.toJson());
+        }
+
+        for (final notification in _notifications) {
+          await _dbHelper.insertNotification(notification.toJson());
+        }
+      } else {
+        // 오프라인 모드: 로컬 DB에서 데이터 로드
+        await _loadOfflineData();
+      }
+
+      notifyListeners();
+    } catch (e) {
+      _setError('식물 데이터 로드 실패: $e');
+      print('Error loading plant data: $e');
+    }
+  }
+
+  // 과거 데이터 로드
+  Future<void> loadHistoricalData() async {
+    if (_plant == null) return;
+
+    try {
+      _setError(null);
+
+      if (NetworkHelper.isOnline) {
+        _historicalData = await ApiService.getHistoricalData(_plant!.id, _selectedPeriod);
+      } else {
+        final historicalMaps = await _dbHelper.getHistoricalSensorData(_plant!.id, _selectedPeriod);
+        _historicalData = historicalMaps.map((map) => HistoricalDataPoint.fromJson(map)).toList();
+      }
+
+      notifyListeners();
+    } catch (e) {
+      _setError('과거 데이터 로드 실패: $e');
+      print('Error loading historical data: $e');
+    }
+  }
+
+  // 기간 선택 변경
+  void setSelectedPeriod(String period) {
+    if (_selectedPeriod != period) {
+      _selectedPeriod = period;
+      notifyListeners();
+      loadHistoricalData();
+    }
+  }
+
+  // 알림 읽음 처리
+  Future<void> markNotificationAsRead(int notificationId, int index) async {
+    try {
+      bool success = false;
+
+      if (NetworkHelper.isOnline) {
+        success = await ApiService.markNotificationAsRead(notificationId);
+      } else {
+        success = true; // 오프라인에서는 로컬에서만 처리
+      }
+
+      if (success && index < _notifications.length) {
+        await _dbHelper.markNotificationAsRead(notificationId);
+        _notifications[index] = _notifications[index].copyWith(isRead: true);
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error marking notification as read: $e');
+    }
+  }
+
+  // 주기적 업데이트 시작
+  void _startPeriodicUpdates() {
+    _stopPeriodicUpdates();
+    _sensorTimer = Timer.periodic(Duration(seconds: 30), (timer) {
+      if (_plant != null && NetworkHelper.isOnline) {
+        loadPlantData();
+      }
+    });
+  }
+
+  // 주기적 업데이트 중지
+  void _stopPeriodicUpdates() {
+    _sensorTimer?.cancel();
+    _sensorTimer = null;
+  }
+
+  // 센서 데이터 상태 체크
+  bool isValueInRange(double value, double min, double max) {
+    return value >= min && value <= max;
+  }
+
+  // 전체 상태 계산
+  String getOverallStatus() {
+    if (_sensorData == null || _plant == null) return '알 수 없음';
+
+    bool tempOk = isValueInRange(_sensorData!.temperature, _plant!.optimalTempMin, _plant!.optimalTempMax);
+    bool humidityOk = isValueInRange(_sensorData!.humidity, _plant!.optimalHumidityMin, _plant!.optimalHumidityMax);
+    bool soilOk = isValueInRange(_sensorData!.soilMoisture, _plant!.optimalSoilMoistureMin, _plant!.optimalSoilMoistureMax);
+    bool lightOk = isValueInRange(_sensorData!.light, _plant!.optimalLightMin, _plant!.optimalLightMax);
+
+    int okCount = [tempOk, humidityOk, soilOk, lightOk].where((x) => x).length;
+
+    if (okCount == 4) return '최적';
+    if (okCount >= 2) return '양호';
+    return '주의 필요';
+  }
+
+  // 상태 색상 계산
+  Color getOverallStatusColor() {
+    String status = getOverallStatus();
+    switch (status) {
+      case '최적':
+        return Color(0xFF2E7D32);
+      case '양호':
+        return Color(0xFF66BB6A);
+      case '주의 필요':
+        return Color(0xFFE53E3E);
+      default:
+        return Color(0xFF999999);
+    }
+  }
+
+  // 읽지 않은 알림 수
+  int get unreadNotificationsCount =>
+      _notifications.where((n) => !n.isRead).length;
+
+  // 연결 상태 확인
+  Future<bool> checkConnection() async {
+    try {
+      return await ApiService.testConnection();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 데이터 동기화 (오프라인에서 온라인으로 전환시 사용)
+  Future<void> syncData() async {
+    if (!NetworkHelper.isOnline || _plant == null) return;
+
+    try {
+      // 서버의 최신 데이터로 동기화
+      await loadPlantData();
+      print('Data synchronized successfully');
+    } catch (e) {
+      print('Error syncing data: $e');
+    }
+  }
+
   // 임시 식물 프로파일 데이터 (API 실패 시 fallback)
   List<PlantProfile> _getDefaultPlantProfiles() {
     return [
@@ -323,355 +775,8 @@ class PlantProvider extends ChangeNotifier {
         optimalLightMax: 70,
         description: '물을 적게 줘도 되는 초보자용 식물',
       ),
-      PlantProfile(
-        species: 'Epipremnum aureum',
-        commonName: '골든 포토스',
-        optimalTempMin: 17,
-        optimalTempMax: 25,
-        optimalHumidityMin: 45,
-        optimalHumidityMax: 65,
-        optimalSoilMoistureMin: 35,
-        optimalSoilMoistureMax: 55,
-        optimalLightMin: 30,
-        optimalLightMax: 65,
-        description: '노란 무늬가 있는 아름다운 덩굴식물',
-      ),
-      PlantProfile(
-        species: 'Ficus benjamina',
-        commonName: '벤자민 고무나무',
-        optimalTempMin: 16,
-        optimalTempMax: 24,
-        optimalHumidityMin: 40,
-        optimalHumidityMax: 60,
-        optimalSoilMoistureMin: 35,
-        optimalSoilMoistureMax: 55,
-        optimalLightMin: 50,
-        optimalLightMax: 80,
-        description: '작은 잎이 빽빽한 실내 나무',
-      ),
     ];
   }
-
-  // 식물 등록 - 개선된 에러 처리
-  Future<bool> registerPlant(Plant plant) async {
-    _setLoading(true);
-    _setError(null);
-
-    try {
-      Plant? registeredPlant = await ApiService.registerPlant(plant);
-      if (registeredPlant != null) {
-        _plant = registeredPlant;
-        await CacheHelper.setString(CacheHelper.CURRENT_PLANT_ID, registeredPlant.id);
-
-        // 식물 등록 후 바로 데이터 로드 시도
-        await _loadPlantDataWithRetry();
-        _startPeriodicUpdates();
-        notifyListeners();
-        return true;
-      } else {
-        _setError('식물 등록에 실패했습니다.');
-        return false;
-      }
-    } catch (e) {
-      _setError('식물 등록 중 오류가 발생했습니다: $e');
-      return false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // AI 식물 등록 (실제 PlantNet API 사용)
-  Future<bool> registerPlantWithAI() async {
-    _setLoading(true);
-    _setError(null);
-
-    try {
-      // 실제 구현에서는 이미지 피커를 사용해야 함
-      // import 'package:image_picker/image_picker.dart';
-      // final ImagePicker picker = ImagePicker();
-      // final XFile? image = await picker.pickImage(source: ImageSource.camera);
-
-      // 현재는 시뮬레이션으로 처리 (카메라 기능이 없으므로)
-      // 실제 앱에서는 위의 이미지 피커 코드를 사용하고 아래 주석을 해제하세요
-
-      /*
-      if (image == null) {
-        _setError('이미지를 선택해주세요.');
-        return false;
-      }
-
-      File imageFile = File(image.path);
-
-      // PlantNet API 호출
-      AIIdentificationResult? result = await ApiService.identifyPlant(imageFile);
-
-      if (result == null) {
-        _setError('식물을 인식할 수 없습니다. 다시 시도해주세요.');
-        return false;
-      }
-
-      if (result.confidence < 0.5) {
-        _setError('식물 인식 정확도가 낮습니다. 더 선명한 사진으로 다시 시도해주세요.');
-        return false;
-      }
-
-      Plant aiRecognizedPlant = Plant(
-        id: '', // API에서 생성됨
-        name: result.suggestedName,
-        species: result.species,
-        registeredDate: DateTime.now().toString().split(' ')[0],
-        optimalTempMin: result.optimalSettings['optimalTempMin']!,
-        optimalTempMax: result.optimalSettings['optimalTempMax']!,
-        optimalHumidityMin: result.optimalSettings['optimalHumidityMin']!,
-        optimalHumidityMax: result.optimalSettings['optimalHumidityMax']!,
-        optimalSoilMoistureMin: result.optimalSettings['optimalSoilMoistureMin']!,
-        optimalSoilMoistureMax: result.optimalSettings['optimalSoilMoistureMax']!,
-        optimalLightMin: result.optimalSettings['optimalLightMin']!,
-        optimalLightMax: result.optimalSettings['optimalLightMax']!,
-      );
-
-      return await registerPlant(aiRecognizedPlant);
-      */
-
-      // 임시 시뮬레이션 (실제 앱에서는 위의 주석을 해제하고 이 부분을 제거)
-      await Future.delayed(Duration(seconds: 2));
-
-      if (_plantProfiles.isNotEmpty) {
-        PlantProfile randomProfile = _plantProfiles[Random().nextInt(_plantProfiles.length)];
-
-        Plant aiRecognizedPlant = Plant(
-          id: '', // API에서 생성됨
-          name: '내 ${randomProfile.commonName}',
-          species: randomProfile.species,
-          registeredDate: DateTime.now().toString().split(' ')[0],
-          optimalTempMin: randomProfile.optimalTempMin,
-          optimalTempMax: randomProfile.optimalTempMax,
-          optimalHumidityMin: randomProfile.optimalHumidityMin,
-          optimalHumidityMax: randomProfile.optimalHumidityMax,
-          optimalSoilMoistureMin: randomProfile.optimalSoilMoistureMin,
-          optimalSoilMoistureMax: randomProfile.optimalSoilMoistureMax,
-          optimalLightMin: randomProfile.optimalLightMin,
-          optimalLightMax: randomProfile.optimalLightMax,
-        );
-
-        return await registerPlant(aiRecognizedPlant);
-      } else {
-        _setError('식물 프로파일을 먼저 로드해주세요.');
-        return false;
-      }
-    } catch (e) {
-      _setError('AI 인식에 실패했습니다: $e');
-      return false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // 식물 정보 업데이트
-  Future<bool> updatePlant(Plant updatedPlant) async {
-    if (_plant == null) return false;
-
-    _setLoading(true);
-    _setError(null);
-
-    try {
-      Plant? result = await ApiService.updatePlant(_plant!.id, updatedPlant);
-      if (result != null) {
-        _plant = result;
-        notifyListeners();
-        return true;
-      } else {
-        _setError('식물 정보 업데이트에 실패했습니다.');
-        return false;
-      }
-    } catch (e) {
-      _setError('식물 정보 업데이트 중 오류가 발생했습니다: $e');
-      return false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // 식물 삭제
-  Future<bool> deletePlant() async {
-    if (_plant == null) return false;
-
-    _setLoading(true);
-    _setError(null);
-
-    try {
-      bool success = await ApiService.deletePlant(_plant!.id);
-      if (success) {
-        _plant = null;
-        _sensorData = null;
-        _notifications.clear();
-        _historicalData.clear();
-        _stopPeriodicUpdates();
-        await CacheHelper.remove(CacheHelper.CURRENT_PLANT_ID);
-        notifyListeners();
-        return true;
-      } else {
-        _setError('식물 삭제에 실패했습니다.');
-        return false;
-      }
-    } catch (e) {
-      _setError('식물 삭제 중 오류가 발생했습니다: $e');
-      return false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // 재시도 기능이 있는 식물 데이터 로드
-  Future<void> _loadPlantDataWithRetry({int retryCount = 3}) async {
-    for (int i = 0; i < retryCount; i++) {
-      try {
-        await loadPlantData();
-        if (_sensorData != null) {
-          return; // 성공적으로 데이터를 로드했으면 리턴
-        }
-      } catch (e) {
-        print('Data load attempt ${i + 1} failed: $e');
-        if (i < retryCount - 1) {
-          await Future.delayed(Duration(seconds: 2 * (i + 1))); // 점진적 지연
-        }
-      }
-    }
-
-    // 모든 재시도가 실패한 경우, 에러를 설정하지만 계속 진행
-    print('All data load attempts failed, but continuing with plant registration');
-  }
-
-  // 식물 데이터 로드 - 개선된 에러 처리
-  Future<void> loadPlantData() async {
-    if (_plant == null) return;
-
-    try {
-      _setError(null);
-
-      // 병렬로 데이터 로드하되, 하나가 실패해도 다른 것들은 계속 진행
-      final results = await Future.wait([
-        ApiService.getCurrentSensorData(_plant!.id).catchError((e) {
-          print('센서 데이터 로드 실패: $e');
-          return null;
-        }),
-        ApiService.getNotifications(_plant!.id).catchError((e) {
-          print('알림 데이터 로드 실패: $e');
-          return <NotificationItem>[];
-        }),
-        ApiService.getHistoricalData(_plant!.id, _selectedPeriod).catchError((e) {
-          print('과거 데이터 로드 실패: $e');
-          return <HistoricalDataPoint>[];
-        }),
-      ], eagerError: false);
-
-      _sensorData = results[0] as SensorData?;
-      _notifications = results[1] as List<NotificationItem>;
-      _historicalData = results[2] as List<HistoricalDataPoint>;
-
-      // 센서 데이터가 null이면 경고 표시하지만 에러로 처리하지 않음
-      if (_sensorData == null) {
-        print('센서 데이터를 사용할 수 없습니다. Mock 데이터나 캐시된 데이터를 확인하세요.');
-      }
-
-      notifyListeners();
-    } catch (e) {
-      _setError('식물 데이터 로드 실패: $e');
-      print('Error loading plant data: $e');
-    }
-  }
-
-  // 과거 데이터 로드
-  Future<void> loadHistoricalData() async {
-    if (_plant == null) return;
-
-    try {
-      _setError(null);
-      _historicalData = await ApiService.getHistoricalData(_plant!.id, _selectedPeriod);
-      notifyListeners();
-    } catch (e) {
-      _setError('과거 데이터 로드 실패: $e');
-      print('Error loading historical data: $e');
-    }
-  }
-
-  // 기간 선택 변경
-  void setSelectedPeriod(String period) {
-    if (_selectedPeriod != period) {
-      _selectedPeriod = period;
-      notifyListeners();
-      loadHistoricalData();
-    }
-  }
-
-  // 알림 읽음 처리
-  Future<void> markNotificationAsRead(int notificationId, int index) async {
-    try {
-      bool success = await ApiService.markNotificationAsRead(notificationId);
-      if (success && index < _notifications.length) {
-        _notifications[index] = _notifications[index].copyWith(isRead: true);
-        notifyListeners();
-      }
-    } catch (e) {
-      print('Error marking notification as read: $e');
-    }
-  }
-
-  // 주기적 업데이트 시작
-  void _startPeriodicUpdates() {
-    _stopPeriodicUpdates();
-    _sensorTimer = Timer.periodic(Duration(seconds: 30), (timer) {
-      if (_plant != null && NetworkHelper.isOnline) {
-        loadPlantData();
-      }
-    });
-  }
-
-  // 주기적 업데이트 중지
-  void _stopPeriodicUpdates() {
-    _sensorTimer?.cancel();
-    _sensorTimer = null;
-  }
-
-  // 센서 데이터 상태 체크
-  bool isValueInRange(double value, double min, double max) {
-    return value >= min && value <= max;
-  }
-
-  // 전체 상태 계산
-  String getOverallStatus() {
-    if (_sensorData == null || _plant == null) return '알 수 없음';
-
-    bool tempOk = isValueInRange(_sensorData!.temperature, _plant!.optimalTempMin, _plant!.optimalTempMax);
-    bool humidityOk = isValueInRange(_sensorData!.humidity, _plant!.optimalHumidityMin, _plant!.optimalHumidityMax);
-    bool soilOk = isValueInRange(_sensorData!.soilMoisture, _plant!.optimalSoilMoistureMin, _plant!.optimalSoilMoistureMax);
-    bool lightOk = isValueInRange(_sensorData!.light, _plant!.optimalLightMin, _plant!.optimalLightMax);
-
-    int okCount = [tempOk, humidityOk, soilOk, lightOk].where((x) => x).length;
-
-    if (okCount == 4) return '최적';
-    if (okCount >= 2) return '양호';
-    return '주의 필요';
-  }
-
-  // 상태 색상 계산
-  Color getOverallStatusColor() {
-    String status = getOverallStatus();
-    switch (status) {
-      case '최적':
-        return Color(0xFF2E7D32);
-      case '양호':
-        return Color(0xFF66BB6A);
-      case '주의 필요':
-        return Color(0xFFE53E3E);
-      default:
-        return Color(0xFF999999);
-    }
-  }
-
-  // 읽지 않은 알림 수
-  int get unreadNotificationsCount =>
-      _notifications.where((n) => !n.isRead).length;
 
   @override
   void dispose() {
