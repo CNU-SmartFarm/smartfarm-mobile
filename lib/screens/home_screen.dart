@@ -11,11 +11,11 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<PlantProvider>(
       builder: (context, plantProvider, child) {
-        if (plantProvider.isLoading) {
+        if (plantProvider.isLoading && !plantProvider.hasPlant) {
           return Center(child: CircularProgressIndicator());
         }
 
-        if (plantProvider.error != null) {
+        if (plantProvider.error != null && !plantProvider.hasPlant) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -166,18 +166,6 @@ class HomeScreen extends StatelessWidget {
     final plant = plantProvider.plant!;
     final sensorData = plantProvider.sensorData;
 
-    if (sensorData == null) {
-      return Center(
-        child: Column(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('센서 데이터를 불러오는 중...'),
-          ],
-        ),
-      );
-    }
-
     return Column(
       children: [
         // 식물 정보 카드
@@ -245,6 +233,137 @@ class HomeScreen extends StatelessWidget {
 
         SizedBox(height: 16),
 
+        // 센서 데이터 처리 - 개선된 로딩 및 에러 상태
+        _buildSensorDataSection(context, plantProvider, plant, sensorData),
+      ],
+    );
+  }
+
+  Widget _buildSensorDataSection(BuildContext context, PlantProvider plantProvider, plant, sensorData) {
+    // 센서 데이터가 로딩 중이고 아직 없는 경우
+    if (plantProvider.isLoading && sensorData == null) {
+      return Card(
+        child: Container(
+          height: 200,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text(
+                '센서 데이터를 불러오는 중...',
+                style: TextStyle(color: Color(0xFF666666)),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '잠시만 기다려주세요',
+                style: TextStyle(
+                  color: Color(0xFF999999),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 센서 데이터가 없고 에러가 있는 경우
+    if (sensorData == null && plantProvider.error != null) {
+      return Card(
+        child: Container(
+          padding: EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(
+                Icons.warning_amber_outlined,
+                size: 48,
+                color: Colors.orange,
+              ),
+              SizedBox(height: 16),
+              Text(
+                '센서 데이터를 불러올 수 없습니다',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF333333),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                '네트워크 연결을 확인하거나 잠시 후 다시 시도해주세요',
+                style: TextStyle(
+                  color: Color(0xFF666666),
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: plantProvider.isLoading ? null : () {
+                  plantProvider.loadPlantData();
+                },
+                icon: Icon(Icons.refresh),
+                label: Text('다시 시도'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color(0xFF4CAF50),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 센서 데이터가 없지만 에러가 없는 경우 (초기 상태)
+    if (sensorData == null) {
+      return Card(
+        child: Container(
+          padding: EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(
+                Icons.sensors_outlined,
+                size: 48,
+                color: Colors.grey[400],
+              ),
+              SizedBox(height: 16),
+              Text(
+                '센서 데이터 준비 중',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF333333),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                '센서가 연결되면 실시간 데이터를 표시합니다',
+                style: TextStyle(
+                  color: Color(0xFF666666),
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 16),
+              if (!plantProvider.isLoading)
+                TextButton.icon(
+                  onPressed: () => plantProvider.loadPlantData(),
+                  icon: Icon(Icons.refresh),
+                  label: Text('새로고침'),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 센서 데이터가 있는 경우 - 정상적인 표시
+    return Column(
+      children: [
         // 센서 데이터 그리드
         GridView.count(
           crossAxisCount: 2,
@@ -309,6 +428,12 @@ class HomeScreen extends StatelessWidget {
 
         // 상태 카드
         _buildStatusCard(plantProvider, sensorData),
+
+        // 로딩 중이거나 에러가 있는 경우 추가 정보 표시
+        if (plantProvider.isLoading || plantProvider.error != null) ...[
+          SizedBox(height: 16),
+          _buildStatusIndicator(plantProvider),
+        ],
       ],
     );
   }
@@ -381,6 +506,81 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildStatusIndicator(PlantProvider plantProvider) {
+    if (plantProvider.isLoading) {
+      return Container(
+        padding: EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.blue[50],
+          border: Border.all(color: Colors.blue[200]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '데이터를 업데이트하는 중...',
+                style: TextStyle(
+                  color: Colors.blue[700],
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (plantProvider.error != null) {
+      return Container(
+        padding: EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          border: Border.all(color: Colors.orange[200]!),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_outlined,
+              color: Colors.orange[700],
+              size: 16,
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '일부 데이터를 업데이트할 수 없습니다',
+                style: TextStyle(
+                  color: Colors.orange[700],
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => plantProvider.loadPlantData(),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size(0, 32),
+              ),
+              child: Text(
+                '재시도',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SizedBox.shrink();
   }
 
   void _showPlantRegistrationDialog(BuildContext context) {
