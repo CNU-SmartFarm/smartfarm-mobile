@@ -45,30 +45,152 @@ class PlantProvider extends ChangeNotifier {
     }
   }
 
-  // 식물 프로파일 로드
+  // 식물 프로파일 로드 - API 우선, 실패 시 캐시 사용
   Future<void> loadPlantProfiles() async {
     try {
       _setError(null);
 
-      // API가 구현되지 않았을 경우 임시 데이터 사용
-      try {
-        _plantProfiles = await ApiService.getPlantProfiles();
-        if (_plantProfiles.isEmpty) {
-          _plantProfiles = _getDefaultPlantProfiles();
-        }
-      } catch (e) {
-        print('API 호출 실패, 임시 데이터 사용: $e');
-        _plantProfiles = _getDefaultPlantProfiles();
+      // 먼저 캐시에서 로드 (빠른 UI 응답)
+      final cachedProfiles = CacheHelper.getJson(CacheHelper.PLANT_PROFILES_CACHE);
+      if (cachedProfiles != null && cachedProfiles['data'] != null) {
+        List<dynamic> profilesData = cachedProfiles['data'];
+        _plantProfiles = profilesData.map((item) => PlantProfile.fromJson(item)).toList();
+        notifyListeners();
       }
 
-      notifyListeners();
+      // 네트워크가 연결되어 있으면 API에서 최신 데이터 가져오기
+      if (NetworkHelper.isOnline) {
+        try {
+          List<PlantProfile> apiProfiles = await ApiService.getPlantProfiles();
+
+          if (apiProfiles.isNotEmpty) {
+            _plantProfiles = apiProfiles;
+
+            // 성공적으로 가져온 데이터를 캐시에 저장
+            await CacheHelper.setJson(CacheHelper.PLANT_PROFILES_CACHE, {
+              'data': apiProfiles.map((profile) => profile.toJson()).toList(),
+              'lastUpdated': DateTime.now().toIso8601String(),
+            });
+
+            notifyListeners();
+            print('식물 프로파일 API에서 성공적으로 로드: ${apiProfiles.length}개');
+          } else if (_plantProfiles.isEmpty) {
+            // API 응답이 비어있고 캐시도 없으면 기본 데이터 사용
+            _plantProfiles = _getDefaultPlantProfiles();
+            print('API 응답이 비어있어 기본 데이터 사용');
+            notifyListeners();
+          }
+        } catch (apiError) {
+          print('API 호출 실패: $apiError');
+
+          // API 실패했지만 캐시된 데이터가 없으면 기본 데이터 사용
+          if (_plantProfiles.isEmpty) {
+            _plantProfiles = _getDefaultPlantProfiles();
+            print('API 실패 및 캐시 없음, 기본 데이터 사용');
+            notifyListeners();
+          }
+          // 캐시된 데이터가 있으면 그것을 계속 사용 (이미 위에서 로드됨)
+        }
+      } else {
+        // 오프라인이고 캐시된 데이터가 없으면 기본 데이터 사용
+        if (_plantProfiles.isEmpty) {
+          _plantProfiles = _getDefaultPlantProfiles();
+          print('오프라인 상태, 기본 데이터 사용');
+          notifyListeners();
+        }
+      }
+
     } catch (e) {
       _setError('식물 프로파일을 불러오는데 실패했습니다: $e');
       print('Error loading plant profiles: $e');
+
+      // 에러가 발생해도 기본 데이터는 제공
+      if (_plantProfiles.isEmpty) {
+        _plantProfiles = _getDefaultPlantProfiles();
+        notifyListeners();
+      }
     }
   }
 
-  // 임시 식물 프로파일 데이터
+  // 식물 프로파일 새로고침 (강제로 API에서 다시 가져오기)
+  Future<void> refreshPlantProfiles() async {
+    if (!NetworkHelper.isOnline) {
+      _setError('네트워크 연결을 확인해주세요.');
+      return;
+    }
+
+    _setLoading(true);
+    try {
+      _setError(null);
+
+      List<PlantProfile> apiProfiles = await ApiService.getPlantProfiles();
+
+      if (apiProfiles.isNotEmpty) {
+        _plantProfiles = apiProfiles;
+
+        // 캐시 업데이트
+        await CacheHelper.setJson(CacheHelper.PLANT_PROFILES_CACHE, {
+          'data': apiProfiles.map((profile) => profile.toJson()).toList(),
+          'lastUpdated': DateTime.now().toIso8601String(),
+        });
+
+        notifyListeners();
+        print('식물 프로파일 새로고침 완료: ${apiProfiles.length}개');
+      } else {
+        _setError('서버에서 식물 프로파일을 가져올 수 없습니다.');
+      }
+    } catch (e) {
+      _setError('식물 프로파일 새로고침 실패: $e');
+      print('Error refreshing plant profiles: $e');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // 특정 종의 프로파일 찾기
+  PlantProfile? getProfileBySpecies(String species) {
+    try {
+      return _plantProfiles.firstWhere((profile) => profile.species == species);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 일반명으로 프로파일 검색
+  List<PlantProfile> searchProfiles(String query) {
+    if (query.isEmpty) return _plantProfiles;
+
+    String lowerQuery = query.toLowerCase();
+    return _plantProfiles.where((profile) {
+      return profile.commonName.toLowerCase().contains(lowerQuery) ||
+          profile.species.toLowerCase().contains(lowerQuery);
+    }).toList();
+  }
+
+  // 캐시된 프로파일이 얼마나 오래되었는지 확인
+  DateTime? getCachedProfilesAge() {
+    final cachedProfiles = CacheHelper.getJson(CacheHelper.PLANT_PROFILES_CACHE);
+    if (cachedProfiles != null && cachedProfiles['lastUpdated'] != null) {
+      try {
+        return DateTime.parse(cachedProfiles['lastUpdated']);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // 캐시가 오래되었는지 확인 (24시간 기준)
+  bool isCacheExpired() {
+    final lastUpdated = getCachedProfilesAge();
+    if (lastUpdated == null) return true;
+
+    final now = DateTime.now();
+    final difference = now.difference(lastUpdated);
+    return difference.inHours >= 24;
+  }
+
+  // 임시 식물 프로파일 데이터 (API 실패 시 fallback)
   List<PlantProfile> _getDefaultPlantProfiles() {
     return [
       PlantProfile(

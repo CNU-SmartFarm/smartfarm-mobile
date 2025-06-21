@@ -6,7 +6,7 @@ import '../models/app_models.dart';
 import '../helpers/api_exception.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://43.201.68.168:8080';
+  static const String baseUrl = 'http://43.201.68.168:8080/api';
   static const Map<String, String> headers = {
     'Content-Type': 'application/json',
   };

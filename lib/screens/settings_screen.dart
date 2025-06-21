@@ -7,6 +7,7 @@ import '../providers/navigation_provider.dart';
 import '../widgets/plant_settings_dialog.dart';
 import '../widgets/settings_section.dart';
 import '../widgets/info_row.dart';
+import '../helpers/sync_helper.dart';
 
 class SettingsScreen extends StatelessWidget {
   @override
@@ -34,6 +35,14 @@ class SettingsScreen extends StatelessWidget {
 
                 SizedBox(height: 16),
 
+                // 식물 프로파일 섹션 (새로 추가)
+                SettingsSection(
+                  title: '식물 프로파일',
+                  child: _buildPlantProfileSection(context, plantProvider),
+                ),
+
+                SizedBox(height: 16),
+
                 // 알림 설정 섹션
                 SettingsSection(
                   title: '알림 설정',
@@ -53,7 +62,7 @@ class SettingsScreen extends StatelessWidget {
                 // 앱 정보 섹션
                 SettingsSection(
                   title: '앱 정보',
-                  child: _buildAppInfoSection(),
+                  child: _buildAppInfoSection(plantProvider),
                 ),
 
                 SizedBox(height: 32),
@@ -169,6 +178,95 @@ class SettingsScreen extends StatelessWidget {
             },
             icon: Icon(Icons.tune),
             label: Text('최적 환경 수정'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Color(0xFF4CAF50),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlantProfileSection(BuildContext context, PlantProvider plantProvider) {
+    final cachedAge = plantProvider.getCachedProfilesAge();
+    final isExpired = plantProvider.isCacheExpired();
+
+    return Column(
+      children: [
+        InfoRow(
+            label: '프로파일 개수',
+            value: '${plantProvider.plantProfiles.length}개'
+        ),
+        if (cachedAge != null)
+          InfoRow(
+              label: '마지막 업데이트',
+              value: _formatLastUpdate(cachedAge)
+          ),
+
+        SizedBox(height: 16),
+
+        if (isExpired) ...[
+          Container(
+            padding: EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              border: Border.all(color: Colors.orange[200]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_outlined, color: Colors.orange),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '식물 프로파일이 오래되었습니다. 새로고침을 권장합니다.',
+                    style: TextStyle(
+                      color: Colors.orange[700],
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: 12),
+        ],
+
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: plantProvider.isLoading ? null : () async {
+              await plantProvider.refreshPlantProfiles();
+
+              if (plantProvider.error == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('식물 프로파일이 업데이트되었습니다.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(plantProvider.error!),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            icon: plantProvider.isLoading
+                ? SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+                : Icon(Icons.refresh),
+            label: Text(plantProvider.isLoading ? '업데이트 중...' : '프로파일 새로고침'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Color(0xFF4CAF50),
               foregroundColor: Colors.white,
@@ -302,13 +400,14 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAppInfoSection() {
+  Widget _buildAppInfoSection(PlantProvider plantProvider) {
     return Column(
       children: [
         InfoRow(label: '앱 버전', value: '1.0.0'),
         InfoRow(label: '개발팀', value: '돌보미 팀'),
         InfoRow(label: 'API 서버', value: 'api.smartfarm.com'),
         InfoRow(label: '마지막 동기화', value: _getLastSyncTime()),
+        InfoRow(label: '식물 DB 버전', value: _getPlantDBVersion(plantProvider)),
       ],
     );
   }
@@ -422,6 +521,29 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _formatLastUpdate(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays > 0) {
+      return '${difference.inDays}일 전';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}시간 전';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}분 전';
+    } else {
+      return '방금 전';
+    }
+  }
+
+  String _getPlantDBVersion(PlantProvider plantProvider) {
+    final cachedAge = plantProvider.getCachedProfilesAge();
+    if (cachedAge != null) {
+      return 'v${cachedAge.millisecondsSinceEpoch ~/ 1000000}';
+    }
+    return 'v1.0';
   }
 
   void _showPlantSettingsDialog(BuildContext context) {
@@ -552,7 +674,21 @@ class SettingsScreen extends StatelessWidget {
   }
 
   String _getLastSyncTime() {
-    // SyncHelper에서 마지막 동기화 시간을 가져오는 로직
-    return '방금 전'; // 임시값
+    final lastSync = SyncHelper.getLastSyncTime();
+    if (lastSync != null) {
+      final now = DateTime.now();
+      final difference = now.difference(lastSync);
+
+      if (difference.inDays > 0) {
+        return '${difference.inDays}일 전';
+      } else if (difference.inHours > 0) {
+        return '${difference.inHours}시간 전';
+      } else if (difference.inMinutes > 0) {
+        return '${difference.inMinutes}분 전';
+      } else {
+        return '방금 전';
+      }
+    }
+    return '알 수 없음';
   }
 }

@@ -147,11 +147,15 @@ class _AppInitializerState extends State<AppInitializer> {
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+    // 빌드 완료 후에 초기화 실행
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeApp();
+    });
   }
 
   Future<void> _initializeApp() async {
     try {
+      // Provider들을 listen: false로 가져와서 빌드 중 상태 변경 방지
       final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
       final plantProvider = Provider.of<PlantProvider>(context, listen: false);
 
@@ -174,13 +178,17 @@ class _AppInitializerState extends State<AppInitializer> {
       // 동기화 시작
       SyncHelper.startPeriodicSync();
 
-      setState(() {
-        _isInitialized = true;
-      });
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _initError = e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _initError = e.toString();
+        });
+      }
       print('앱 초기화 오류: $e');
     }
   }
@@ -215,7 +223,10 @@ class _AppInitializerState extends State<AppInitializer> {
                     _initError = null;
                     _isInitialized = false;
                   });
-                  _initializeApp();
+                  // 다시 초기화 시도
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _initializeApp();
+                  });
                 },
                 child: Text('다시 시도'),
               ),
