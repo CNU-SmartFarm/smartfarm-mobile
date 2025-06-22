@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/plant_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/navigation_provider.dart';
-import '../models/app_models.dart';
+import '../models/notification_item.dart';
 import '../widgets/notification_item_tile.dart';
 import '../helpers/network_helper.dart';
 import '../helpers/notification_helper.dart';
@@ -25,7 +25,6 @@ class _NotificationScreenState extends State<NotificationScreen> with AutomaticK
     if (_isRefreshing) return;
 
     final now = DateTime.now();
-    // 너무 빈번한 새로고침 방지 (3초 간격)
     if (_lastRefresh != null && now.difference(_lastRefresh!).inSeconds < 3) {
       return;
     }
@@ -69,7 +68,6 @@ class _NotificationScreenState extends State<NotificationScreen> with AutomaticK
         return;
       }
 
-      // 확인 다이얼로그
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -90,7 +88,6 @@ class _NotificationScreenState extends State<NotificationScreen> with AutomaticK
 
       if (confirmed != true) return;
 
-      // 모든 읽지 않은 알림을 읽음으로 처리
       for (final entry in unreadNotifications) {
         await plantProvider.markNotificationAsRead(entry.value.id, entry.key);
       }
@@ -513,7 +510,6 @@ class _NotificationScreenState extends State<NotificationScreen> with AutomaticK
           if (!plantProvider.hasPlant) ...[
             ElevatedButton.icon(
               onPressed: () {
-                // 홈 탭으로 이동
                 navigationProvider.goToHome();
                 NotificationHelper.showSuccessSnackBar(context, '홈 화면으로 이동했습니다.');
               },
@@ -639,7 +635,6 @@ class _NotificationScreenState extends State<NotificationScreen> with AutomaticK
               ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  // NavigationProvider를 사용해서 설정 화면으로 이동
                   Provider.of<NavigationProvider>(context, listen: false).goToSettings();
                 },
                 style: ElevatedButton.styleFrom(

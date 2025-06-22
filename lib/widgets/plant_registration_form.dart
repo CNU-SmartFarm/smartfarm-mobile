@@ -4,7 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
 import '../providers/plant_provider.dart';
-import '../models/app_models.dart';
+import '../models/plant.dart';
+import '../models/plant_profile.dart';
 import '../helpers/permission_helper.dart';
 import '../helpers/notification_helper.dart';
 
@@ -30,37 +31,28 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
   };
 
   void _updateOptimalSettings(List<PlantProfile> plantProfiles) {
-    PlantProfile? profile = plantProfiles.firstWhere(
-          (p) => p.species == _plantSpecies,
-      orElse: () => PlantProfile(
-        species: '',
-        commonName: '',
-        optimalTempMin: 18,
-        optimalTempMax: 25,
-        optimalHumidityMin: 40,
-        optimalHumidityMax: 70,
-        optimalSoilMoistureMin: 40,
-        optimalSoilMoistureMax: 70,
-        optimalLightMin: 60,
-        optimalLightMax: 90,
-        description: '',
-      ),
-    );
+    if (_plantSpecies.isEmpty) return;
 
-    if (profile.species.isNotEmpty) {
-      setState(() {
-        _optimalSettings = {
-          'optimalTempMin': profile.optimalTempMin,
-          'optimalTempMax': profile.optimalTempMax,
-          'optimalHumidityMin': profile.optimalHumidityMin,
-          'optimalHumidityMax': profile.optimalHumidityMax,
-          'optimalSoilMoistureMin': profile.optimalSoilMoistureMin,
-          'optimalSoilMoistureMax': profile.optimalSoilMoistureMax,
-          'optimalLightMin': profile.optimalLightMin,
-          'optimalLightMax': profile.optimalLightMax,
-        };
-      });
+    PlantProfile? profile;
+    try {
+      profile = plantProfiles.firstWhere((p) => p.species == _plantSpecies);
+    } catch (e) {
+      // 기본값 유지
+      return;
     }
+
+    setState(() {
+      _optimalSettings = {
+        'optimalTempMin': profile!.optimalTempMin,
+        'optimalTempMax': profile.optimalTempMax,
+        'optimalHumidityMin': profile.optimalHumidityMin,
+        'optimalHumidityMax': profile.optimalHumidityMax,
+        'optimalSoilMoistureMin': profile.optimalSoilMoistureMin,
+        'optimalSoilMoistureMax': profile.optimalSoilMoistureMax,
+        'optimalLightMin': profile.optimalLightMin,
+        'optimalLightMax': profile.optimalLightMax,
+      };
+    });
   }
 
   Future<void> _handleSubmit(BuildContext context) async {
@@ -70,7 +62,7 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
     }
 
     Plant newPlant = Plant(
-      id: '', // API에서 생성됨
+      id: '',
       name: _plantName,
       species: _plantSpecies,
       registeredDate: DateTime.now().toString().split(' ')[0],
@@ -101,7 +93,6 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
     });
 
     try {
-      // 카메라 권한 확인
       final hasPermission = await PermissionHelper.checkCameraPermission();
       if (!hasPermission) {
         final granted = await PermissionHelper.requestCameraPermission();
@@ -111,17 +102,15 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
         }
       }
 
-      // 이미지 소스 선택 다이얼로그
       final imageSource = await _showImageSourceDialog(context);
       if (imageSource == null) return;
 
-      // 이미지 피커로 이미지 선택
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(
         source: imageSource,
-        imageQuality: 85, // 이미지 품질 (1-100)
-        maxWidth: 1024,   // 최대 너비
-        maxHeight: 1024,  // 최대 높이
+        imageQuality: 85,
+        maxWidth: 1024,
+        maxHeight: 1024,
       );
 
       if (image == null) {
@@ -131,7 +120,6 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
 
       File imageFile = File(image.path);
 
-      // 파일 크기 확인 (5MB 제한)
       final fileSize = await imageFile.length();
       if (fileSize > 5 * 1024 * 1024) {
         NotificationHelper.showErrorSnackBar(context, '이미지 파일이 너무 큽니다. (최대 5MB)');
@@ -353,7 +341,7 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
             constraints: BoxConstraints(maxWidth: 280),
             child: Text(
               _isAIProcessing
-                  ? '잠시만 기다려주세요. PlantNet AI가 식물을 분석하고 있습니다.'
+                  ? '잠시만 기다려주세요. AI가 식물을 분석하고 있습니다.'
                   : '카메라 또는 갤러리에서 식물 사진을 선택하여 자동으로 등록하세요. 잎이 선명하게 보이는 사진이 가장 좋습니다.',
               style: TextStyle(
                 fontSize: 14,
@@ -493,91 +481,51 @@ class _PlantRegistrationFormState extends State<PlantRegistrationForm> {
             });
             _updateOptimalSettings(plantProfiles);
           },
-          selectedItemBuilder: (BuildContext context) {
-            return [
-              Container(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '선택하세요',
-                  style: TextStyle(
-                    color: Color(0xFF999999),
-                    fontSize: 16,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              ...plantProfiles.map((PlantProfile profile) {
-                return Container(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${profile.species} (${profile.commonName})',
-                    style: TextStyle(
-                      color: Color(0xFF333333),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              }).toList(),
-            ];
-          },
           items: [
             DropdownMenuItem(
               value: '',
-              child: Container(
-                width: double.infinity,
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  '선택하세요',
-                  style: TextStyle(
-                    color: Color(0xFF999999),
-                    fontSize: 16,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+              child: Text(
+                '선택하세요',
+                style: TextStyle(
+                  color: Color(0xFF999999),
+                  fontSize: 16,
                 ),
               ),
             ),
             ...plantProfiles.map((PlantProfile profile) {
               return DropdownMenuItem(
                 value: profile.species,
-                child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      profile.species,
+                      style: TextStyle(
+                        color: Color(0xFF333333),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                    if (profile.commonName.isNotEmpty) ...[
+                      SizedBox(height: 2),
                       Text(
-                        profile.species,
+                        profile.commonName,
                         style: TextStyle(
-                          color: Color(0xFF333333),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF666666),
+                          fontSize: 12,
                         ),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,
                       ),
-                      if (profile.commonName.isNotEmpty) ...[
-                        SizedBox(height: 2),
-                        Text(
-                          profile.commonName,
-                          style: TextStyle(
-                            color: Color(0xFF666666),
-                            fontSize: 12,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
               );
             }).toList(),
           ],
-          dropdownColor: Colors.white,
-          borderRadius: BorderRadius.circular(8),
         ),
 
         if (_plantSpecies.isNotEmpty) ...[

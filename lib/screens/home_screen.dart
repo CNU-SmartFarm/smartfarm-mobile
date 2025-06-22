@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'dart:async';
 
 import '../providers/plant_provider.dart';
 import '../providers/settings_provider.dart';
@@ -8,7 +7,6 @@ import '../widgets/sensor_card.dart';
 import '../widgets/plant_registration_form.dart';
 import '../helpers/network_helper.dart';
 import '../helpers/notification_helper.dart';
-import '../helpers/sync_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -24,7 +22,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   Future<void> _refreshData() async {
     final now = DateTime.now();
 
-    // 너무 빈번한 새로고침 방지 (5초 간격)
     if (_lastRefresh != null && now.difference(_lastRefresh!).inSeconds < 5) {
       return;
     }
@@ -38,10 +35,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         if (plantProvider.hasPlant) {
           await plantProvider.loadPlantData();
         }
-
-        // 백그라운드에서 동기화도 실행
-        unawaited(SyncHelper.manualSync());
-
         NotificationHelper.showSuccessSnackBar(context, '데이터가 새로고침되었습니다.');
       } else {
         NotificationHelper.showOfflineSnackBar(context);
@@ -55,11 +48,9 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     try {
       final plantProvider = Provider.of<PlantProvider>(context, listen: false);
 
-      // 연결 상태 다시 확인
       final isConnected = await plantProvider.checkConnection();
 
       if (isConnected) {
-        // 연결이 복구되면 데이터 다시 로드
         await plantProvider.loadPlantData();
         NotificationHelper.showSuccessSnackBar(context, '연결이 복구되었습니다.');
       } else {
@@ -322,40 +313,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-          ),
-          SizedBox(height: 24),
-
-          // 추가 기능 버튼들
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton.icon(
-                onPressed: () {
-                  _showFeaturesDialog(context);
-                },
-                icon: Icon(Icons.help_outline, size: 18),
-                label: Text('기능 안내'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Color(0xFF666666),
-                ),
-              ),
-              SizedBox(width: 16),
-              TextButton.icon(
-                onPressed: NetworkHelper.isOnline ? () async {
-                  final plantProvider = Provider.of<PlantProvider>(context, listen: false);
-                  await plantProvider.refreshPlantProfiles();
-
-                  if (plantProvider.error == null) {
-                    NotificationHelper.showSuccessSnackBar(context, '식물 데이터베이스가 업데이트되었습니다.');
-                  }
-                } : null,
-                icon: Icon(Icons.cloud_download_outlined, size: 18),
-                label: Text('DB 업데이트'),
-                style: TextButton.styleFrom(
-                  foregroundColor: NetworkHelper.isOnline ? Color(0xFF666666) : Colors.grey,
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -667,32 +624,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                 ),
               ],
             ),
-            if (overallStatus != '최적') ...[
-              SizedBox(height: 16),
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.amber[50],
-                  border: Border.all(color: Colors.amber[200]!),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.lightbulb_outline, color: Colors.amber[700], size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _getStatusAdvice(overallStatus),
-                        style: TextStyle(
-                          color: Colors.amber[700],
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -714,17 +645,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     }
   }
 
-  String _getStatusAdvice(String status) {
-    switch (status) {
-      case '주의 필요':
-        return '여러 환경 요소가 최적 범위를 벗어났습니다. 환경을 조정해주세요.';
-      case '양호':
-        return '대체로 좋은 상태입니다. 일부 환경 요소를 개선하면 더 좋을 것 같습니다.';
-      default:
-        return '식물이 건강한 상태입니다!';
-    }
-  }
-
   void _showPlantRegistrationDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -732,80 +652,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       builder: (BuildContext context) {
         return PlantRegistrationForm();
       },
-    );
-  }
-
-  void _showFeaturesDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('스마트팜 기능'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildFeatureItem(Icons.sensors, '실시간 센서 모니터링', '온도, 습도, 토양수분, 조도를 실시간으로 확인'),
-                _buildFeatureItem(Icons.camera_alt, 'AI 식물 인식', '카메라로 식물을 촬영하여 자동 식별 및 등록'),
-                _buildFeatureItem(Icons.notifications, '스마트 알림', '최적 환경을 벗어날 때 즉시 알림'),
-                _buildFeatureItem(Icons.trending_up, '성장 기록', '시간별, 일별 환경 데이터 트렌드 분석'),
-                _buildFeatureItem(Icons.tune, '맞춤 설정', '식물별 최적 환경 범위 개인화'),
-                _buildFeatureItem(Icons.cloud_sync, '클라우드 동기화', '데이터 백업 및 기기 간 동기화'),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text('확인'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildFeatureItem(IconData icon, String title, String description) {
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: Color(0xFF4CAF50).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, color: Color(0xFF4CAF50), size: 16),
-          ),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  description,
-                  style: TextStyle(
-                    color: Color(0xFF666666),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

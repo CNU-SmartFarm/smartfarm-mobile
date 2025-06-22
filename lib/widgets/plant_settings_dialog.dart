@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/plant_provider.dart';
-import '../models/app_models.dart';
+import '../models/plant.dart';
+import '../models/plant_profile.dart';
 
 class PlantSettingsDialog extends StatefulWidget {
   @override
@@ -47,9 +48,15 @@ class _PlantSettingsDialogState extends State<PlantSettingsDialog> {
     final plant = plantProvider.plant;
 
     if (plant != null) {
-      PlantProfile? profile = plantProvider.plantProfiles.firstWhere(
-            (p) => p.species == plant.species,
-        orElse: () => PlantProfile(
+      // 해당 종의 프로파일 찾기
+      PlantProfile? profile;
+      try {
+        profile = plantProvider.plantProfiles.firstWhere(
+              (p) => p.species == plant.species,
+        );
+      } catch (e) {
+        // 찾지 못하면 기본값 사용
+        profile = PlantProfile(
           species: '',
           commonName: '',
           optimalTempMin: 18,
@@ -61,24 +68,22 @@ class _PlantSettingsDialogState extends State<PlantSettingsDialog> {
           optimalLightMin: 60,
           optimalLightMax: 90,
           description: '',
-        ),
-      );
-
-      if (profile.species.isNotEmpty) {
-        setState(() {
-          _tempSettings = {
-            'optimalTempMin': profile.optimalTempMin,
-            'optimalTempMax': profile.optimalTempMax,
-            'optimalHumidityMin': profile.optimalHumidityMin,
-            'optimalHumidityMax': profile.optimalHumidityMax,
-            'optimalSoilMoistureMin': profile.optimalSoilMoistureMin,
-            'optimalSoilMoistureMax': profile.optimalSoilMoistureMax,
-            'optimalLightMin': profile.optimalLightMin,
-            'optimalLightMax': profile.optimalLightMax,
-          };
-          _hasChanges = true;
-        });
+        );
       }
+
+      setState(() {
+        _tempSettings = {
+          'optimalTempMin': profile!.optimalTempMin,
+          'optimalTempMax': profile.optimalTempMax,
+          'optimalHumidityMin': profile.optimalHumidityMin,
+          'optimalHumidityMax': profile.optimalHumidityMax,
+          'optimalSoilMoistureMin': profile.optimalSoilMoistureMin,
+          'optimalSoilMoistureMax': profile.optimalSoilMoistureMax,
+          'optimalLightMin': profile.optimalLightMin,
+          'optimalLightMax': profile.optimalLightMax,
+        };
+        _hasChanges = true;
+      });
     }
   }
 

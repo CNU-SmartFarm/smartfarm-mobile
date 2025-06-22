@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/app_models.dart';
+import '../models/notification_item.dart';
 
 class NotificationItemTile extends StatelessWidget {
   final NotificationItem notification;
